@@ -115,6 +115,21 @@ Quick start:
 
 Your bot will run 24/7 for free with auto-restarts and monitoring.
 
+### 💾 Persistent Storage (Important!)
+
+Koyeb free tier has ephemeral storage - user preferences reset on redeploy.
+
+**Solution**: Use GitHub Gist (100% free) for persistent storage.
+
+See setup guide: [PERSISTENT_STORAGE.md](PERSISTENT_STORAGE.md)
+
+Quick setup:
+1. Create GitHub Personal Access Token with `gist` scope
+2. Create a secret Gist with `user_preferences.json`
+3. Add `GITHUB_TOKEN` and `GIST_ID` to Koyeb environment variables
+
+Now user preferences persist across redeploys! ✅
+
 ## Розробка
 
 Для розробки рекомендується:

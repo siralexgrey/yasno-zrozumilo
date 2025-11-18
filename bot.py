@@ -41,6 +41,10 @@ UPDATE_INTERVAL = 1800  # 30 minutes in seconds
 PREFERENCES_FILE = "user_preferences.json"
 SCHEDULE_CACHE_FILE = "schedule_cache.json"
 
+# GitHub Gist configuration for persistent storage
+GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
+GIST_ID = os.getenv('GIST_ID')
+
 # Global storage for schedule data
 schedule_data: Optional[Dict[str, Any]] = None
 last_update: Optional[datetime] = None
@@ -57,9 +61,46 @@ previous_schedule_data: Optional[Dict[str, Any]] = None
 
 
 def load_preferences() -> None:
-    """Load user preferences from JSON file."""
+    """Load user preferences from JSON file or GitHub Gist."""
     global user_queue_preferences, user_notifications, last_update
     
+    # Try to load from GitHub Gist first (persistent storage)
+    if GITHUB_TOKEN and GIST_ID:
+        try:
+            logger.info("Loading preferences from GitHub Gist...")
+            headers = {
+                'Authorization': f'token {GITHUB_TOKEN}',
+                'Accept': 'application/vnd.github.v3+json'
+            }
+            response = requests.get(f'https://api.github.com/gists/{GIST_ID}', headers=headers)
+            
+            if response.status_code == 200:
+                gist_data = response.json()
+                if 'user_preferences.json' in gist_data['files']:
+                    content = gist_data['files']['user_preferences.json']['content']
+                    data = json.loads(content)
+                    
+                    # Convert string keys back to integers
+                    user_queue_preferences = {int(k): v for k, v in data.get('queues', {}).items()}
+                    user_notifications = {int(k): v for k, v in data.get('notifications', {}).items()}
+                    
+                    # Restore last update time
+                    if 'last_update' in data and data['last_update']:
+                        try:
+                            last_update = datetime.fromisoformat(data['last_update'])
+                            logger.info(f"Restored last update time from Gist: {last_update}")
+                        except Exception as e:
+                            logger.warning(f"Could not restore last update time: {e}")
+                    
+                    logger.info(f"Loaded preferences from Gist for {len(user_queue_preferences)} users")
+                    
+                    # Also save to local file as backup
+                    save_preferences_local()
+                    return
+        except Exception as e:
+            logger.warning(f"Failed to load from GitHub Gist: {e}. Falling back to local file.")
+    
+    # Fallback to local file
     if not os.path.exists(PREFERENCES_FILE):
         logger.info("No preferences file found, starting with empty preferences")
         return
@@ -87,7 +128,49 @@ def load_preferences() -> None:
 
 
 def save_preferences() -> None:
-    """Save user preferences to JSON file."""
+    """Save user preferences to JSON file and GitHub Gist."""
+    # Save to local file first
+    save_preferences_local()
+    
+    # Also save to GitHub Gist for persistence across redeploys
+    if GITHUB_TOKEN and GIST_ID:
+        try:
+            data = {
+                'queues': user_queue_preferences,
+                'notifications': user_notifications,
+                'last_update': last_update.isoformat() if last_update else None,
+                'last_saved': datetime.now().isoformat()
+            }
+            
+            headers = {
+                'Authorization': f'token {GITHUB_TOKEN}',
+                'Accept': 'application/vnd.github.v3+json'
+            }
+            
+            payload = {
+                'files': {
+                    'user_preferences.json': {
+                        'content': json.dumps(data, indent=2, ensure_ascii=False)
+                    }
+                }
+            }
+            
+            response = requests.patch(
+                f'https://api.github.com/gists/{GIST_ID}',
+                headers=headers,
+                json=payload
+            )
+            
+            if response.status_code == 200:
+                logger.debug("User preferences saved to GitHub Gist")
+            else:
+                logger.warning(f"Failed to save to Gist: {response.status_code}")
+        except Exception as e:
+            logger.warning(f"Failed to save to GitHub Gist: {e}")
+
+
+def save_preferences_local() -> None:
+    """Save user preferences to local JSON file."""
     try:
         data = {
             'queues': user_queue_preferences,
@@ -99,7 +182,7 @@ def save_preferences() -> None:
         with open(PREFERENCES_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         
-        logger.debug("User preferences saved")
+        logger.debug("User preferences saved locally")
     except Exception as e:
         logger.error(f"Failed to save preferences: {e}")
 
