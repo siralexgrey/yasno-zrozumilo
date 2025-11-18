@@ -249,7 +249,7 @@ async def notify_users_of_changes(application: Application, old_data: Dict[str, 
                 logger.error(f"Failed to send notification to user {user_id}: {e}")
 
 
-async def update_schedule(context: ContextTypes.DEFAULT_TYPE) -> None:
+async def update_schedule(context) -> None:
     """
     Background task to update the schedule every 30 minutes.
     Also sends notifications to users if their queue schedule changed.
@@ -260,15 +260,38 @@ async def update_schedule(context: ContextTypes.DEFAULT_TYPE) -> None:
     data = await fetch_schedule()
     
     if data:
+        # Get the application object (context can be Application or CallbackContext)
+        application = context if isinstance(context, Application) else context.application
+        
         # Check for changes and notify users
         if schedule_data is not None and previous_schedule_data != data:
-            await notify_users_of_changes(context.application, previous_schedule_data, data)
+            await notify_users_of_changes(application, previous_schedule_data, data)
         
         previous_schedule_data = schedule_data  # Store previous state
         schedule_data = data
-        last_update = datetime.now()
+        
+        # Extract the most recent updatedOn timestamp from all queues
+        updated_timestamps = []
+        for queue_name, queue_data in data.items():
+            if isinstance(queue_data, dict) and 'updatedOn' in queue_data:
+                try:
+                    updated_timestamps.append(datetime.fromisoformat(queue_data['updatedOn']))
+                except Exception as e:
+                    logger.warning(f"Could not parse updatedOn for queue {queue_name}: {e}")
+        
+        # Set last_update to the most recent updatedOn timestamp
+        if updated_timestamps:
+            last_update_utc = max(updated_timestamps)
+            # Convert from UTC (+00:00) to schedule timezone (+02:00)
+            from datetime import timezone, timedelta as td
+            schedule_tz = timezone(td(hours=2))
+            last_update = last_update_utc.astimezone(schedule_tz)
+            logger.info(f"Schedule updated at {last_update} (from API updatedOn)")
+        else:
+            last_update = datetime.now()
+            logger.warning("No updatedOn timestamps found, using current time")
+        
         save_preferences()  # Save last update time
-        logger.info(f"Schedule updated at {last_update}")
     else:
         logger.warning("Failed to update schedule")
 
@@ -564,11 +587,20 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if last_update is None:
         status_message = "⏳ Дані ще не завантажені"
     else:
-        time_since_update = datetime.now() - last_update
+        # Make last_update timezone-aware if it's not already
+        if last_update.tzinfo is None:
+            from datetime import timezone
+            last_update_aware = last_update.replace(tzinfo=timezone.utc)
+        else:
+            last_update_aware = last_update
+        
+        # Use timezone-aware datetime for comparison
+        now = datetime.now(last_update_aware.tzinfo)
+        time_since_update = now - last_update_aware
         minutes_ago = int(time_since_update.total_seconds() / 60)
         
-        next_update = last_update + timedelta(seconds=UPDATE_INTERVAL)
-        time_until_next = next_update - datetime.now()
+        next_update = last_update_aware + timedelta(seconds=UPDATE_INTERVAL)
+        time_until_next = next_update - now
         minutes_until = int(time_until_next.total_seconds() / 60)
         
         status_message = (
