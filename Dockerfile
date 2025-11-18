@@ -12,10 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY bot.py .
-COPY .env.example .
-
-# Create directories for data persistence
-RUN mkdir -p /app/data
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

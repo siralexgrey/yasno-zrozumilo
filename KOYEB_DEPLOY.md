@@ -27,9 +27,19 @@
    
 ### 3. **Add Environment Variables**
 Click **"Environment variables"** and add:
+
+**Required:**
 ```
 TELEGRAM_BOT_TOKEN=your_actual_token_here
 ```
+
+**Optional (for persistent storage):**
+```
+GITHUB_TOKEN=ghp_your_token_here
+GIST_ID=your_gist_id_here
+```
+
+See [PERSISTENT_STORAGE.md](PERSISTENT_STORAGE.md) for Gist setup.
 
 ### 4. **Configure Service**
 - **Service name**: `yasno-bot` (or your choice)
@@ -75,6 +85,18 @@ INFO - Application started
    docker build -t yasno-bot .
    docker run -e TELEGRAM_BOT_TOKEN=your_token yasno-bot
    ```
+
+### Multiple instances created?
+This happens when:
+1. **Health check fails** → Koyeb stops instance → Retries → Creates new instance
+2. **Build fails** → Shows "Image does not exist"
+
+**Fix:**
+1. Delete ALL failed services in Koyeb dashboard
+2. Verify environment variable `TELEGRAM_BOT_TOKEN` is set correctly
+3. Make sure port 8000 is configured
+4. Check build logs for errors
+5. Create new service (don't redeploy failed one)
 
 ### Need to update bot?
 1. Push changes to GitHub
