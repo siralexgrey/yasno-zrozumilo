@@ -97,6 +97,24 @@ https://app.yasno.ua/api/blackout-service/public/shutdowns/regions/3/dsos/301/pl
 - **requests** (v2.31.0) - HTTP-запити до API
 - **python-dotenv** (v1.0.0) - Завантаження змінних середовища
 
+## 🚀 Deployment (Free)
+
+### Deploy to Koyeb (Recommended)
+
+**100% FREE - No credit card required!**
+
+See detailed guide: [KOYEB_DEPLOY.md](KOYEB_DEPLOY.md)
+
+Quick start:
+
+1. Push code to GitHub
+2. Go to [app.koyeb.com](https://app.koyeb.com)
+3. Create service from GitHub
+4. Add `TELEGRAM_BOT_TOKEN` environment variable
+5. Deploy! 🎉
+
+Your bot will run 24/7 for free with auto-restarts and monitoring.
+
 ## Розробка
 
 Для розробки рекомендується:
