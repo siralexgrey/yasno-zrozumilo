@@ -10,6 +10,7 @@ import asyncio
 import json
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
+from aiohttp import web
 import requests
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
@@ -900,6 +901,24 @@ def main() -> None:
     
     # Register message handler for custom keyboard buttons
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_keyboard_buttons))
+    
+    # Start health check server in background
+    async def start_health_server():
+        async def health_check(request):
+            return web.Response(text='OK', status=200)
+        
+        app = web.Application()
+        app.router.add_get('/health', health_check)
+        app.router.add_get('/', health_check)
+        
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', 8000)
+        await site.start()
+        logger.info("Health check server started on port 8000")
+    
+    # Start health server
+    asyncio.get_event_loop().run_until_complete(start_health_server())
     
     # Start the bot
     logger.info("Starting bot...")

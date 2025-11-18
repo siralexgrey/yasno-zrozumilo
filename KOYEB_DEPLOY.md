@@ -23,7 +23,7 @@
 6. Configure:
    - **Builder**: Dockerfile
    - **Dockerfile path**: `Dockerfile` (default)
-   - **Port**: Leave empty (not a web service)
+   - **Port**: `8000` (health check endpoint)
    
 ### 3. **Add Environment Variables**
 Click **"Environment variables"** and add:
