@@ -874,13 +874,6 @@ def main() -> None:
     """
     Start the bot.
     """
-    # Start keep-alive web server (for Replit/UptimeRobot)
-    try:
-        from keep_alive import keep_alive
-        keep_alive()
-    except ImportError:
-        logger.info("Keep-alive server not available (running locally)")
-    
     # Get bot token from environment variable
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     
