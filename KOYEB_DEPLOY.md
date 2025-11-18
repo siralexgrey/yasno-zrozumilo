@@ -18,8 +18,9 @@
 1. Click **"Create Service"**
 2. Select **"GitHub"**
 3. Connect your GitHub account
-4. Select repository: `yasno-zrozumilo`
-5. Configure:
+4. **IMPORTANT**: Select repository: `siralexgrey/yasno-zrozumilo` (NOT ai-chat!)
+5. Select branch: `main`
+6. Configure:
    - **Builder**: Dockerfile
    - **Dockerfile path**: `Dockerfile` (default)
    - **Port**: Leave empty (not a web service)
