@@ -7,16 +7,19 @@ Fetches planned power outage schedules from Yasno API and displays them to users
 import os
 import logging
 import asyncio
+import json
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import requests
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
+    MessageHandler,
     ContextTypes,
+    filters,
 )
 
 # Load environment variables
@@ -33,6 +36,10 @@ logger = logging.getLogger(__name__)
 API_URL = "https://app.yasno.ua/api/blackout-service/public/shutdowns/regions/3/dsos/301/planned-outages"
 UPDATE_INTERVAL = 1800  # 30 minutes in seconds
 
+# Persistent storage file paths
+PREFERENCES_FILE = "user_preferences.json"
+SCHEDULE_CACHE_FILE = "schedule_cache.json"
+
 # Global storage for schedule data
 schedule_data: Optional[Dict[str, Any]] = None
 last_update: Optional[datetime] = None
@@ -48,6 +55,95 @@ user_notifications: Dict[int, int] = {}
 previous_schedule_data: Optional[Dict[str, Any]] = None
 
 
+def load_preferences() -> None:
+    """Load user preferences from JSON file."""
+    global user_queue_preferences, user_notifications, last_update
+    
+    if not os.path.exists(PREFERENCES_FILE):
+        logger.info("No preferences file found, starting with empty preferences")
+        return
+    
+    try:
+        with open(PREFERENCES_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            
+        # Convert string keys back to integers (JSON keys are always strings)
+        user_queue_preferences = {int(k): v for k, v in data.get('queues', {}).items()}
+        user_notifications = {int(k): v for k, v in data.get('notifications', {}).items()}
+        
+        # Restore last update time
+        if 'last_update' in data and data['last_update']:
+            try:
+                last_update = datetime.fromisoformat(data['last_update'])
+                logger.info(f"Restored last update time: {last_update}")
+            except Exception as e:
+                logger.warning(f"Could not restore last update time: {e}")
+        
+        logger.info(f"Loaded preferences for {len(user_queue_preferences)} users with queues")
+        logger.info(f"Loaded notification settings for {len(user_notifications)} users")
+    except Exception as e:
+        logger.error(f"Failed to load preferences: {e}")
+
+
+def save_preferences() -> None:
+    """Save user preferences to JSON file."""
+    try:
+        data = {
+            'queues': user_queue_preferences,
+            'notifications': user_notifications,
+            'last_update': last_update.isoformat() if last_update else None,
+            'last_saved': datetime.now().isoformat()
+        }
+        
+        with open(PREFERENCES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        
+        logger.debug("User preferences saved")
+    except Exception as e:
+        logger.error(f"Failed to save preferences: {e}")
+
+
+def save_schedule_cache(data: Dict[str, Any]) -> None:
+    """Save schedule data with updatedOn timestamps to cache file."""
+    try:
+        cache_data = {
+            'schedule': data,
+            'cached_at': datetime.now().isoformat()
+        }
+        
+        with open(SCHEDULE_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(cache_data, f, indent=2, ensure_ascii=False)
+        
+        logger.debug("Schedule cache saved")
+    except Exception as e:
+        logger.error(f"Failed to save schedule cache: {e}")
+
+
+def load_schedule_cache() -> Optional[Dict[str, Any]]:
+    """Load cached schedule data with updatedOn timestamps."""
+    global schedule_data, last_update
+    
+    if not os.path.exists(SCHEDULE_CACHE_FILE):
+        logger.info("No schedule cache found")
+        return None
+    
+    try:
+        with open(SCHEDULE_CACHE_FILE, 'r', encoding='utf-8') as f:
+            cache_data = json.load(f)
+        
+        schedule = cache_data.get('schedule')
+        cached_at = cache_data.get('cached_at')
+        
+        if schedule:
+            logger.info(f"Loaded cached schedule from {cached_at}")
+            return schedule
+        
+        return None
+    except Exception as e:
+        logger.error(f"Failed to load schedule cache: {e}")
+        return None
+
+
 async def fetch_schedule() -> Optional[Dict[str, Any]]:
     """
     Fetch the power outage schedule from Yasno API.
@@ -60,6 +156,7 @@ async def fetch_schedule() -> Optional[Dict[str, Any]]:
         response.raise_for_status()
         data = response.json()
         logger.info("Successfully fetched schedule from API")
+        save_schedule_cache(data)  # Save to cache with updatedOn timestamps
         return data
     except requests.exceptions.RequestException as e:
         logger.error(f"Error fetching schedule: {e}")
@@ -170,6 +267,7 @@ async def update_schedule(context: ContextTypes.DEFAULT_TYPE) -> None:
         previous_schedule_data = schedule_data  # Store previous state
         schedule_data = data
         last_update = datetime.now()
+        save_preferences()  # Save last update time
         logger.info(f"Schedule updated at {last_update}")
     else:
         logger.warning("Failed to update schedule")
@@ -265,20 +363,22 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     welcome_message = (
         "👋 Вітаю! Я бот Yasno Zrozumilo.\n\n"
         "Я надаю інформацію про планові відключення електроенергії.\n\n"
-        "Доступні команди:\n"
-        "/schedule - Показати актуальний графік відключень\n"
-        "/queue - Вибрати свою чергу для фільтрації\n"
-        "/myqueue - Показати графік тільки для вашої черги\n"
-        "/notifications - Керувати сповіщеннями про оновлення\n"
-        "/status - Статус оновлення даних\n"
-        "/help - Допомога\n\n"
         "🔔 *Як використовувати сповіщення:*\n"
-        "1. Виконайте /queue та виберіть вашу чергу\n"
-        "2. Виконайте /notifications та включіть сповіщення\n"
+        "1. Натисніть кнопку нижче щоб вибрати чергу\n"
+        "2. Натисніть кнопку щоб включити сповіщення\n"
         "3. Ви будете отримувати оновлення кожні 30 хвилин!\n\n"
         "Я працюю як в особистих повідомленнях, так і в групових чатах!"
     )
-    await update.message.reply_text(welcome_message)
+    
+    # Create custom reply keyboard with command buttons under input field
+    keyboard = [
+        ["📋 Графік", "🔸 Моя черга"],
+        ["⚙️ Вибрати чергу", "🔔 Сповіщення"],
+        ["📊 Статус", "ℹ️ Довідка"]
+    ]
+    
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+    await update.message.reply_text(welcome_message, reply_markup=reply_markup, parse_mode='Markdown')
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -426,6 +526,7 @@ async def queue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if callback_data == "queue_all":
         # Clear user preference
         user_queue_preferences[user_id] = None
+        save_preferences()
         await query.edit_message_text(
             "✅ Налаштування скинуто!\n\n"
             "Тепер /myqueue буде показувати всі черги.\n"
@@ -439,6 +540,7 @@ async def queue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Enable notifications for this user
         chat_id = update.effective_chat.id
         user_notifications[user_id] = chat_id
+        save_preferences()
         
         await query.edit_message_text(
             f"✅ Черга *{queue_name}* збережена!\n\n"
@@ -477,6 +579,131 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
     
     await update.message.reply_text(status_message, parse_mode='Markdown')
+
+
+async def command_buttons_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle command button callbacks from /start menu.
+    """
+    query = update.callback_query
+    callback_data = query.data
+    
+    await query.answer()
+    
+    # Route to appropriate command handler
+    if callback_data == "cmd_schedule":
+        await schedule_callback(update, context)
+    elif callback_data == "cmd_myqueue":
+        await myqueue_callback(update, context)
+    elif callback_data == "cmd_queue":
+        await queue_callback_button(update, context)
+    elif callback_data == "cmd_notifications":
+        await notifications_callback_button(update, context)
+    elif callback_data == "cmd_status":
+        await status_callback(update, context)
+    elif callback_data == "cmd_help":
+        await help_callback(update, context)
+
+
+async def schedule_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle schedule button from command buttons."""
+    query = update.callback_query
+    message = format_schedule(schedule_data, None)
+    await query.edit_message_text(message)
+
+
+async def myqueue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle my queue button from command buttons."""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    queue_name = user_queue_preferences.get(user_id)
+    
+    if queue_name:
+        message = format_schedule(schedule_data, queue_name)
+    else:
+        message = "❌ Ви ще не вибрали чергу\n\nВиберіть чергу з /queue"
+    
+    await query.edit_message_text(message)
+
+
+async def queue_callback_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle queue selection button from command buttons."""
+    query = update.callback_query
+    
+    keyboard = [[InlineKeyboardButton(f"{i}", callback_data=f"queue_{i}") for i in [f"{k}.{j}" for k in range(1, 7) for j in [1, 2]]]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    message = "🔸 *Вибір черги*\n\nВиберіть вашу чергу (1.1 - 6.2):"
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
+
+
+async def notifications_callback_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle notifications button from command buttons."""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    queue_name = user_queue_preferences.get(user_id)
+    is_enabled = user_id in user_notifications
+    
+    keyboard = []
+    
+    if is_enabled:
+        keyboard.append([InlineKeyboardButton("🔔 Вимкнути сповіщення", callback_data="notif_off")])
+        status = f"✅ Сповіщення включені для черги *{queue_name}*"
+    else:
+        keyboard.append([InlineKeyboardButton("🔔 Включити сповіщення", callback_data="notif_on")])
+        if queue_name:
+            status = f"❌ Сповіщення вимкнені для черги *{queue_name}*"
+        else:
+            status = "❌ Сповіщення вимкнені\n\nВиберіть чергу з /queue щоб включити сповіщення"
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    message = (
+        "🔔 *Керування сповіщеннями*\n\n"
+        f"{status}\n\n"
+        "Ви будете отримувати повідомлення коли:\n"
+        "• Графік для вашої черги оновлюється\n"
+        "• З'являється графік на завтра\n\n"
+        "Оновлення перевіряються кожні 30 хвилин."
+    )
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
+
+
+async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle status button from command buttons."""
+    query = update.callback_query
+    
+    message = (
+        "📊 *Статус бота*\n\n"
+        f"⏰ Останнє оновлення: {last_update}\n"
+        f"📡 Статус: ✅ Активний\n"
+        f"🔄 Оновлення: Кожні 30 хвилин\n"
+        f"📚 Кількість черг: 12 (1.1 - 6.2)"
+    )
+    await query.edit_message_text(message, parse_mode='Markdown')
+
+
+async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle help button from command buttons."""
+    query = update.callback_query
+    
+    help_message = (
+        "ℹ️ *Довідка*\n\n"
+        "*Команди:*\n"
+        "/start - Головне меню\n"
+        "/schedule - Подивитися повний графік\n"
+        "/queue - Вибрати чергу\n"
+        "/myqueue - Ваша черга\n"
+        "/notifications - Управління сповіщеннями\n"
+        "/status - Статус бота\n"
+        "/help - Ця довідка\n\n"
+        "*Про бота:*\n"
+        "🤖 Yasno Bot - бот для перегляду графіків перерв\n"
+        "📡 Графік оновлюється автоматично кожні 30 хвилин\n"
+        "🔔 Ви можете отримувати сповіщення про зміни графіка"
+    )
+    await query.edit_message_text(help_message, parse_mode='Markdown')
 
 
 async def notifications_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -537,6 +764,7 @@ async def notifications_callback(update: Update, context: ContextTypes.DEFAULT_T
         
         chat_id = update.effective_chat.id
         user_notifications[user_id] = chat_id
+        save_preferences()
         
         await query.edit_message_text(
             f"✅ Сповіщення включені для черги *{queue_name}*\n\n"
@@ -549,6 +777,7 @@ async def notifications_callback(update: Update, context: ContextTypes.DEFAULT_T
         if user_id in user_notifications:
             queue_name = user_queue_preferences.get(user_id, "невідома")
             del user_notifications[user_id]
+            save_preferences()
             
             await query.edit_message_text(
                 f"❌ Сповіщення вимкнені для черги *{queue_name}*\n\n"
@@ -562,7 +791,18 @@ async def post_init(application: Application) -> None:
     """
     Initialize the bot - fetch initial data and schedule periodic updates.
     """
-    # Fetch initial schedule
+    global schedule_data
+    
+    # Load saved user preferences
+    load_preferences()
+    
+    # Try to load cached schedule (with updatedOn timestamps)
+    cached_schedule = load_schedule_cache()
+    if cached_schedule:
+        schedule_data = cached_schedule
+        logger.info("Using cached schedule data")
+    
+    # Fetch initial schedule (will update cache if successful)
     await update_schedule(application)
     
     # Schedule periodic updates every 30 minutes
@@ -575,10 +815,40 @@ async def post_init(application: Application) -> None:
     logger.info("Scheduled periodic updates every 30 minutes")
 
 
+async def handle_keyboard_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle custom keyboard button presses from the reply keyboard.
+    Works in both private and group chats.
+    """
+    text = update.message.text
+    
+    # Map button text to command handlers
+    button_handlers = {
+        "📋 Графік": schedule_command,
+        "🔸 Моя черга": myqueue_command,
+        "⚙️ Вибрати чергу": queue_command,
+        "🔔 Сповіщення": notifications_command,
+        "📊 Статус": status_command,
+        "ℹ️ Довідка": help_command,
+    }
+    
+    # Get the handler for this button text
+    handler = button_handlers.get(text)
+    if handler:
+        await handler(update, context)
+
+
 def main() -> None:
     """
     Start the bot.
     """
+    # Start keep-alive web server (for Replit/UptimeRobot)
+    try:
+        from keep_alive import keep_alive
+        keep_alive()
+    except ImportError:
+        logger.info("Keep-alive server not available (running locally)")
+    
     # Get bot token from environment variable
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     
@@ -599,8 +869,12 @@ def main() -> None:
     application.add_handler(CommandHandler("notifications", notifications_command))
     
     # Register callback query handlers for inline buttons
+    application.add_handler(CallbackQueryHandler(command_buttons_callback, pattern="^cmd_"))
     application.add_handler(CallbackQueryHandler(notifications_callback, pattern="^notif_"))
     application.add_handler(CallbackQueryHandler(queue_callback))
+    
+    # Register message handler for custom keyboard buttons
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_keyboard_buttons))
     
     # Start the bot
     logger.info("Starting bot...")

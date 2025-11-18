@@ -78,14 +78,37 @@ Replit has two ways to keep your bot running:
 1. Go to https://uptimerobot.com
 2. Sign up (free)
 3. Click **"Add New Monitor"**
-4. Type: **"HTTP(s)"**
-5. URL: Get from Replit:
-   - In Replit, click **"Share"** (top right)
-   - Copy **"Published URL"** (looks like: `https://yasno-bot.replit.dev`)
-6. Interval: 5 minutes
-7. Click **"Create Monitor"**
+4. Configure monitor:
+   - **Monitor Type**: HTTP(s)
+   - **Friendly Name**: Yasno Bot
+   - **URL**: Your Replit URL (see below)
+   - **Monitoring Interval**: 5 minutes
+5. Click **"Create Monitor"**
 
-UptimeRobot will ping your bot every 5 minutes, keeping it alive!
+### Getting Your Replit URL
+
+Your Replit URL will be in one of these formats:
+```
+https://your-repl-name.your-username.repl.co
+https://yasno-zrozumilo-bot.siralexgrey.repl.co
+```
+
+**To find it:**
+1. In Replit, click the **"Run"** button
+2. Look for **"Webview"** tab (appears after bot starts)
+3. Or click **"Open website"** icon (external link) at top
+4. Copy the URL from browser address bar
+
+**What to paste in UptimeRobot:**
+```
+https://your-repl-name.your-username.repl.co
+```
+or
+```
+https://your-repl-name.your-username.repl.co/health
+```
+
+The bot runs a simple web server on port 8080 that responds to HTTP requests. UptimeRobot will ping this URL every 5 minutes, keeping your Replit active and bot running!
 
 ## Test Your Bot
 

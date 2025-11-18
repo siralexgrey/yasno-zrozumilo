@@ -1,6 +1,10 @@
 # Ignore environment variables file
 .env
 
+# User preferences and cache (runtime data)
+user_preferences.json
+schedule_cache.json
+
 # Python cache and bytecode
 __pycache__/
 *.py[cod]
