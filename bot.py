@@ -943,6 +943,23 @@ async def post_init(application: Application) -> None:
     # Fetch initial schedule (will update cache if successful)
     await update_schedule(application)
     
+    # Self-ping to keep Koyeb instance awake
+    async def keep_alive_ping(context):
+        """Ping own health endpoint to prevent Koyeb from sleeping"""
+        try:
+            port = int(os.getenv('PORT', 8000))
+            # Only ping if running on Koyeb (PORT env var is set)
+            if os.getenv('PORT'):
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    try:
+                        async with session.get(f'http://localhost:{port}/health', timeout=5) as resp:
+                            logger.debug(f"Keep-alive ping: {resp.status}")
+                    except Exception as e:
+                        logger.debug(f"Keep-alive ping failed: {e}")
+        except Exception as e:
+            logger.error(f"Keep-alive task error: {e}")
+    
     # Calculate when next update should happen
     # If last fetch is old (more than UPDATE_INTERVAL ago), schedule immediately
     # Otherwise schedule for UPDATE_INTERVAL after last fetch
@@ -976,6 +993,15 @@ async def post_init(application: Application) -> None:
         first=first_run
     )
     logger.info("Scheduled periodic updates every 10 minutes")
+    
+    # Schedule keep-alive pings every 4 minutes (to prevent 5-minute sleep timeout)
+    job_queue.run_repeating(
+        keep_alive_ping,
+        interval=240,  # 4 minutes
+        first=60  # Start after 1 minute
+    )
+    if os.getenv('PORT'):
+        logger.info("Scheduled keep-alive pings every 4 minutes (Koyeb mode)")
 
 
 async def handle_keyboard_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

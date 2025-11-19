@@ -1,10 +1,17 @@
 # Koyeb Deployment Guide
 
-## Problem
-When deploying a new instance to Koyeb, the old instance may still be running, causing port conflicts and errors.
+## Problem: Instance Goes to Sleep
 
-## Solution
-The bot now uses the `PORT` environment variable provided by Koyeb, which allows multiple instances to run on different ports during deployment.
+Koyeb puts instances into "deep sleep" after 5 minutes of no HTTP traffic. Since this bot uses Telegram's long-polling (not webhooks), Koyeb doesn't detect activity and stops the instance.
+
+## Solution Implemented
+
+The bot now automatically pings its own health endpoint every 4 minutes to keep the instance awake. This works by:
+
+1. **Self-ping mechanism**: Bot sends HTTP request to itself (`/health`)
+2. **Frequency**: Every 4 minutes (safely under the 5-minute timeout)
+3. **Smart detection**: Only activates when `PORT` env var exists (Koyeb deployment)
+4. **No local impact**: Doesn't run when testing locally
 
 ## Koyeb Configuration
 
