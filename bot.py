@@ -392,6 +392,20 @@ def minutes_to_time(minutes: int) -> str:
     return f"{hours:02d}:{mins:02d}"
 
 
+def format_date_eastern(date_str: str) -> str:
+    """Convert date from YYYY-MM-DD to DD.MM.YYYY format"""
+    try:
+        if date_str and len(date_str) >= 10:
+            # Extract YYYY-MM-DD from the string
+            date_part = date_str[:10]
+            parts = date_part.split('-')
+            if len(parts) == 3:
+                return f"{parts[2]}.{parts[1]}.{parts[0]}"
+        return date_str[:10]
+    except Exception:
+        return date_str[:10] if date_str else ""
+
+
 def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None) -> str:
     """
     Format the schedule data into a readable message.
@@ -429,7 +443,8 @@ def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None) ->
         # Today's schedule
         if 'today' in queue_data:
             today = queue_data['today']
-            message += f"📅 Сьогодні ({today.get('date', '')[:10]}):\n"
+            today_date = format_date_eastern(today.get('date', ''))
+            message += f"📅 Сьогодні ({today_date}):\n"
             
             if 'slots' in today:
                 has_outages = False
@@ -446,7 +461,8 @@ def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None) ->
         # Tomorrow's schedule
         if 'tomorrow' in queue_data:
             tomorrow = queue_data['tomorrow']
-            message += f"📅 Завтра ({tomorrow.get('date', '')[:10]}):\n"
+            tomorrow_date = format_date_eastern(tomorrow.get('date', ''))
+            message += f"📅 Завтра ({tomorrow_date}):\n"
             
             status = tomorrow.get('status', '')
             if status == 'WaitingForSchedule':
