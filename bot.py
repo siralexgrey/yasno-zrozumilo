@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # API Configuration
 API_URL = "https://app.yasno.ua/api/blackout-service/public/shutdowns/regions/3/dsos/301/planned-outages"
-UPDATE_INTERVAL = 1800  # 30 minutes in seconds
+UPDATE_INTERVAL = 600  # 10 minutes in seconds
 
 # Persistent storage file paths
 PREFERENCES_FILE = "user_preferences.json"
@@ -494,7 +494,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "🔔 *Як використовувати сповіщення:*\n"
         "1. Натисніть кнопку нижче щоб вибрати чергу\n"
         "2. Натисніть кнопку щоб включити сповіщення\n"
-        "3. Ви будете отримувати оновлення кожні 30 хвилин!\n\n"
+        "3. Ви будете отримувати оновлення кожні 10 хвилин!\n\n"
         "Я працюю як в особистих повідомленнях, так і в групових чатах!"
     )
     
@@ -527,9 +527,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Коли ви вибрали чергу та включили сповіщення, ви будете отримувати:\n"
         "• Оновлення коли змінюється графік вашої черги\n"
         "• Сповіщення коли з'являється графік на завтра\n"
-        "Перевірка відбувається кожні 30 хвилин.\n\n"
+        "Перевірка відбувається кожні 10 хвилин.\n\n"
         "*Про бота:*\n"
-        "Бот автоматично оновлює дані кожні 30 хвилин.\n"
+        "Бот автоматично оновлює дані кожні 10 хвилин.\n"
         "Можна використовувати в груповому чаті."
     )
     await update.message.reply_text(help_message, parse_mode='Markdown')
@@ -673,7 +673,7 @@ async def queue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.edit_message_text(
             f"✅ Черга *{queue_name}* збережена!\n\n"
             f"Тепер команда /myqueue буде показувати тільки чергу {queue_name}.\n"
-            f"🔔 Ви будете отримувати оновлення для цієї черги кожні 30 хвилин.\n\n"
+            f"🔔 Ви будете отримувати оновлення для цієї черги кожні 10 хвилин.\n\n"
             "Використовуйте:\n"
             f"• /myqueue - ваша черга ({queue_name})\n"
             "• /schedule - всі черги\n"
@@ -799,7 +799,7 @@ async def notifications_callback_button(update: Update, context: ContextTypes.DE
         "Ви будете отримувати повідомлення коли:\n"
         "• Графік для вашої черги оновлюється\n"
         "• З'являється графік на завтра\n\n"
-        "Оновлення перевіряються кожні 30 хвилин."
+        "Оновлення перевіряються кожні 10 хвилин."
     )
     
     await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
@@ -813,7 +813,7 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "📊 *Статус бота*\n\n"
         f"⏰ Останнє оновлення: {last_update}\n"
         f"📡 Статус: ✅ Активний\n"
-        f"🔄 Оновлення: Кожні 30 хвилин\n"
+        f"🔄 Оновлення: Кожні 10 хвилин\n"
         f"📚 Кількість черг: 12 (1.1 - 6.2)"
     )
     await query.edit_message_text(message, parse_mode='Markdown')
@@ -835,7 +835,7 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "/help - Ця довідка\n\n"
         "*Про бота:*\n"
         "🤖 Yasno Bot - бот для перегляду графіків перерв\n"
-        "📡 Графік оновлюється автоматично кожні 30 хвилин\n"
+        "📡 Графік оновлюється автоматично кожні 10 хвилин\n"
         "🔔 Ви можете отримувати сповіщення про зміни графіка"
     )
     await query.edit_message_text(help_message, parse_mode='Markdown')
@@ -869,7 +869,7 @@ async def notifications_command(update: Update, context: ContextTypes.DEFAULT_TY
         "Ви будете отримувати повідомлення коли:\n"
         "• Графік для вашої черги оновлюється\n"
         "• З'являється графік на завтра\n\n"
-        "Оновлення перевіряються кожні 30 хвилин."
+        "Оновлення перевіряються кожні 10 хвилин."
     )
     
     await update.message.reply_text(
@@ -903,7 +903,7 @@ async def notifications_callback(update: Update, context: ContextTypes.DEFAULT_T
         
         await query.edit_message_text(
             f"✅ Сповіщення включені для черги *{queue_name}*\n\n"
-            "Ви будете отримувати оновлення кожні 30 хвилин.",
+            "Ви будете отримувати оновлення кожні 10 хвилин.",
             parse_mode='Markdown'
         )
         logger.info(f"Notifications enabled for user {user_id}, queue {queue_name}")
@@ -972,7 +972,7 @@ async def post_init(application: Application) -> None:
         interval=UPDATE_INTERVAL,
         first=first_run
     )
-    logger.info("Scheduled periodic updates every 30 minutes")
+    logger.info("Scheduled periodic updates every 10 minutes")
 
 
 async def handle_keyboard_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
