@@ -47,7 +47,8 @@ GIST_ID = os.getenv('GIST_ID')
 
 # Global storage for schedule data
 schedule_data: Optional[Dict[str, Any]] = None
-last_update: Optional[datetime] = None
+last_update: Optional[datetime] = None  # When data was updated in Yasno API (from updatedOn)
+last_fetch: Optional[datetime] = None  # When we last fetched data from API
 
 # User preferences for queue filtering (user_id -> queue_name)
 user_queue_preferences: Dict[int, Optional[str]] = {}
@@ -338,12 +339,17 @@ async def update_schedule(context) -> None:
     Background task to update the schedule every 30 minutes.
     Also sends notifications to users if their queue schedule changed.
     """
-    global schedule_data, last_update, previous_schedule_data
+    global schedule_data, last_update, last_fetch, previous_schedule_data
     
     logger.info("Updating schedule...")
     data = await fetch_schedule()
     
     if data:
+        # Record when we fetched the data
+        from datetime import timezone, timedelta as td
+        schedule_tz = timezone(td(hours=2))
+        last_fetch = datetime.now(schedule_tz)
+        
         # Get the application object (context can be Application or CallbackContext)
         application = context if isinstance(context, Application) else context.application
         
@@ -367,10 +373,9 @@ async def update_schedule(context) -> None:
         if updated_timestamps:
             last_update_utc = max(updated_timestamps)
             # Convert from UTC (+00:00) to schedule timezone (+02:00)
-            from datetime import timezone, timedelta as td
-            schedule_tz = timezone(td(hours=2))
             last_update = last_update_utc.astimezone(schedule_tz)
             logger.info(f"Schedule updated at {last_update} (from API updatedOn)")
+            logger.info(f"Data fetched at {last_fetch}")
         else:
             last_update = datetime.now()
             logger.warning("No updatedOn timestamps found, using current time")
@@ -666,31 +671,29 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """
     Handle the /status command - show update status.
     """
-    global schedule_data, last_update
+    global schedule_data, last_fetch
     
-    if last_update is None:
+    if last_fetch is None:
         status_message = "⏳ Дані ще не завантажені"
     else:
-        # Make last_update timezone-aware if it's not already
-        if last_update.tzinfo is None:
+        # Make last_fetch timezone-aware if it's not already
+        if last_fetch.tzinfo is None:
             from datetime import timezone
-            last_update_aware = last_update.replace(tzinfo=timezone.utc)
+            last_fetch_aware = last_fetch.replace(tzinfo=timezone.utc)
         else:
-            last_update_aware = last_update
+            last_fetch_aware = last_fetch
         
-        # Use timezone-aware datetime for comparison
-        now = datetime.now(last_update_aware.tzinfo)
-        time_since_update = now - last_update_aware
-        minutes_ago = int(time_since_update.total_seconds() / 60)
+        # Calculate next update time
+        next_update = last_fetch_aware + timedelta(seconds=UPDATE_INTERVAL)
         
-        next_update = last_update_aware + timedelta(seconds=UPDATE_INTERVAL)
-        time_until_next = next_update - now
-        minutes_until = int(time_until_next.total_seconds() / 60)
+        # Format times
+        last_fetch_str = last_fetch_aware.strftime('%d.%m.%Y %H:%M')
+        next_update_str = next_update.strftime('%d.%m.%Y %H:%M')
         
         status_message = (
             f"✅ *Статус системи*\n\n"
-            f"Останнє оновлення: {minutes_ago} хв тому\n"
-            f"Наступне оновлення: через {minutes_until} хв\n"
+            f"Останнє оновлення: {last_fetch_str}\n"
+            f"Наступне оновлення: {next_update_str}\n"
             f"Дані: {'✅ Доступні' if schedule_data else '❌ Недоступні'}"
         )
     
@@ -907,7 +910,7 @@ async def post_init(application: Application) -> None:
     """
     Initialize the bot - fetch initial data and schedule periodic updates.
     """
-    global schedule_data
+    global schedule_data, last_fetch
     
     # Load saved user preferences
     load_preferences()
@@ -921,12 +924,37 @@ async def post_init(application: Application) -> None:
     # Fetch initial schedule (will update cache if successful)
     await update_schedule(application)
     
+    # Calculate when next update should happen
+    # If last fetch is old (more than UPDATE_INTERVAL ago), schedule immediately
+    # Otherwise schedule for UPDATE_INTERVAL after last fetch
+    if last_fetch:
+        from datetime import timezone as tz
+        now = datetime.now(tz.utc)
+        if last_fetch.tzinfo is None:
+            last_fetch_aware = last_fetch.replace(tzinfo=tz.utc)
+        else:
+            last_fetch_aware = last_fetch.astimezone(tz.utc)
+        
+        time_since_fetch = (now - last_fetch_aware).total_seconds()
+        
+        if time_since_fetch >= UPDATE_INTERVAL:
+            # Last fetch was too long ago, schedule next update immediately
+            first_run = 10  # Run in 10 seconds
+            logger.info("Last fetch was old, scheduling immediate update")
+        else:
+            # Schedule next update at the proper interval
+            first_run = UPDATE_INTERVAL - time_since_fetch
+            logger.info(f"Scheduling next update in {int(first_run/60)} minutes")
+    else:
+        # No last fetch, schedule for UPDATE_INTERVAL from now
+        first_run = UPDATE_INTERVAL
+    
     # Schedule periodic updates every 30 minutes
     job_queue = application.job_queue
     job_queue.run_repeating(
         update_schedule,
         interval=UPDATE_INTERVAL,
-        first=UPDATE_INTERVAL
+        first=first_run
     )
     logger.info("Scheduled periodic updates every 30 minutes")
 
