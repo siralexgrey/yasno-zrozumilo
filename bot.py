@@ -8,6 +8,9 @@ import os
 import logging
 import asyncio
 import json
+import signal
+import sys
+import atexit
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from aiohttp import web
@@ -1040,9 +1043,12 @@ def main() -> None:
         
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, '0.0.0.0', 8000)
+        
+        # Use PORT environment variable from Koyeb, fallback to 8000 for local
+        port = int(os.getenv('PORT', 8000))
+        site = web.TCPSite(runner, '0.0.0.0', port)
         await site.start()
-        logger.info("Health check server started on port 8000")
+        logger.info(f"Health check server started on port {port}")
     
     # Start health server
     asyncio.get_event_loop().run_until_complete(start_health_server())
