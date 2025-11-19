@@ -2,18 +2,34 @@
 
 ## Problem: Instance Goes to Sleep
 
-Koyeb puts instances into "deep sleep" after 5 minutes of no HTTP traffic. Since this bot uses Telegram's long-polling (not webhooks), Koyeb doesn't detect activity and stops the instance.
+Koyeb puts instances into "deep sleep" after 5 minutes of no HTTP traffic. Since Telegram bots using long-polling don't receive HTTP requests, Koyeb stops the instance.
 
-## Solution Implemented
+## Solution: Webhook Mode
 
-The bot now automatically pings its own health endpoint every 4 minutes to keep the instance awake. This works by:
+The bot now automatically switches between:
+- **Webhook mode** on Koyeb (receives HTTP requests from Telegram)
+- **Polling mode** locally (for development)
 
-1. **Self-ping mechanism**: Bot sends HTTP request to itself (`/health`)
-2. **Frequency**: Every 4 minutes (safely under the 5-minute timeout)
-3. **Smart detection**: Only activates when `PORT` env var exists (Koyeb deployment)
-4. **No local impact**: Doesn't run when testing locally
+This means Koyeb sees constant HTTP traffic from Telegram and keeps the instance awake.
 
 ## Koyeb Configuration
+
+### 1. Build Settings
+
+- **Build command**: (leave empty or use default)
+- **Run command**: `python bot.py` or `.venv/bin/python bot.py`
+
+### 2. Environment Variables
+
+Set these in Koyeb dashboard:
+
+- `TELEGRAM_BOT_TOKEN` - Your Telegram bot token (required)
+- `WEBHOOK_URL` - Your Koyeb app URL, e.g., `https://your-app.koyeb.app` (required for webhook mode)
+- `GITHUB_TOKEN` - (Optional) For persistent storage via Gist
+- `GIST_ID` - (Optional) Your GitHub Gist ID
+- `PORT` - **Automatically set by Koyeb** (don't add manually)
+
+**Important**: Set `WEBHOOK_URL` to your Koyeb app's public URL (found in Koyeb dashboard)
 
 ### 1. Build Settings
 - **Build command**: (leave empty or use default)

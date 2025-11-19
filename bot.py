@@ -943,23 +943,6 @@ async def post_init(application: Application) -> None:
     # Fetch initial schedule (will update cache if successful)
     await update_schedule(application)
     
-    # Self-ping to keep Koyeb instance awake
-    async def keep_alive_ping(context):
-        """Ping own health endpoint to prevent Koyeb from sleeping"""
-        try:
-            port = int(os.getenv('PORT', 8000))
-            # Only ping if running on Koyeb (PORT env var is set)
-            if os.getenv('PORT'):
-                import aiohttp
-                async with aiohttp.ClientSession() as session:
-                    try:
-                        async with session.get(f'http://localhost:{port}/health', timeout=5) as resp:
-                            logger.debug(f"Keep-alive ping: {resp.status}")
-                    except Exception as e:
-                        logger.debug(f"Keep-alive ping failed: {e}")
-        except Exception as e:
-            logger.error(f"Keep-alive task error: {e}")
-    
     # Calculate when next update should happen
     # If last fetch is old (more than UPDATE_INTERVAL ago), schedule immediately
     # Otherwise schedule for UPDATE_INTERVAL after last fetch
@@ -993,15 +976,6 @@ async def post_init(application: Application) -> None:
         first=first_run
     )
     logger.info("Scheduled periodic updates every 10 minutes")
-    
-    # Schedule keep-alive pings every 4 minutes (to prevent 5-minute sleep timeout)
-    job_queue.run_repeating(
-        keep_alive_ping,
-        interval=240,  # 4 minutes
-        first=60  # Start after 1 minute
-    )
-    if os.getenv('PORT'):
-        logger.info("Scheduled keep-alive pings every 4 minutes (Koyeb mode)")
 
 
 async def handle_keyboard_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1063,9 +1037,22 @@ def main() -> None:
         async def health_check(request):
             return web.Response(text='OK', status=200)
         
+        # Webhook handler for Telegram
+        async def telegram_webhook(request):
+            """Handle incoming webhook requests from Telegram"""
+            try:
+                update_dict = await request.json()
+                update = Update.de_json(update_dict, application.bot)
+                await application.process_update(update)
+                return web.Response(text='OK', status=200)
+            except Exception as e:
+                logger.error(f"Webhook error: {e}")
+                return web.Response(text='Error', status=500)
+        
         app = web.Application()
         app.router.add_get('/health', health_check)
         app.router.add_get('/', health_check)
+        app.router.add_post('/webhook', telegram_webhook)  # Telegram webhook endpoint
         
         runner = web.AppRunner(app)
         await runner.setup()
@@ -1075,13 +1062,32 @@ def main() -> None:
         site = web.TCPSite(runner, '0.0.0.0', port)
         await site.start()
         logger.info(f"Health check server started on port {port}")
+        
+        # Set up webhook if running on Koyeb
+        webhook_url = os.getenv('WEBHOOK_URL')
+        if webhook_url:
+            try:
+                await application.bot.set_webhook(url=f"{webhook_url}/webhook")
+                logger.info(f"Webhook set to: {webhook_url}/webhook")
+            except Exception as e:
+                logger.error(f"Failed to set webhook: {e}")
     
     # Start health server
     asyncio.get_event_loop().run_until_complete(start_health_server())
     
     # Start the bot
     logger.info("Starting bot...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    
+    # Use webhook mode on Koyeb, polling locally
+    if os.getenv('WEBHOOK_URL'):
+        logger.info("Running in webhook mode (Koyeb)")
+        # Start and run forever (webhook mode)
+        asyncio.get_event_loop().run_until_complete(application.initialize())
+        asyncio.get_event_loop().run_until_complete(application.start())
+        asyncio.get_event_loop().run_forever()
+    else:
+        logger.info("Running in polling mode (local)")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == '__main__':
