@@ -14,7 +14,6 @@ import atexit
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from aiohttp import web, ClientSession, ClientTimeout
-import requests
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -64,7 +63,7 @@ user_notifications: Dict[int, int] = {}
 previous_schedule_data: Optional[Dict[str, Any]] = None
 
 
-def load_preferences() -> None:
+async def load_preferences() -> None:
     """Load user preferences from JSON file or GitHub Gist."""
     global user_queue_preferences, user_notifications, last_update
     
@@ -76,31 +75,33 @@ def load_preferences() -> None:
                 'Authorization': f'token {GITHUB_TOKEN}',
                 'Accept': 'application/vnd.github.v3+json'
             }
-            response = requests.get(f'https://api.github.com/gists/{GIST_ID}', headers=headers)
             
-            if response.status_code == 200:
-                gist_data = response.json()
-                if 'user_preferences.json' in gist_data['files']:
-                    content = gist_data['files']['user_preferences.json']['content']
-                    data = json.loads(content)
-                    
-                    # Convert string keys back to integers
-                    user_queue_preferences = {int(k): v for k, v in data.get('queues', {}).items()}
-                    user_notifications = {int(k): v for k, v in data.get('notifications', {}).items()}
-                    
-                    # Restore last update time
-                    if 'last_update' in data and data['last_update']:
-                        try:
-                            last_update = datetime.fromisoformat(data['last_update'])
-                            logger.info(f"Restored last update time from Gist: {last_update}")
-                        except Exception as e:
-                            logger.warning(f"Could not restore last update time: {e}")
-                    
-                    logger.info(f"Loaded preferences from Gist for {len(user_queue_preferences)} users")
-                    
-                    # Also save to local file as backup
-                    save_preferences_local()
-                    return
+            timeout = ClientTimeout(total=10)
+            async with ClientSession(timeout=timeout) as session:
+                async with session.get(f'https://api.github.com/gists/{GIST_ID}', headers=headers) as response:
+                    if response.status == 200:
+                        gist_data = await response.json()
+                        if 'user_preferences.json' in gist_data['files']:
+                            content = gist_data['files']['user_preferences.json']['content']
+                            data = json.loads(content)
+                            
+                            # Convert string keys back to integers
+                            user_queue_preferences = {int(k): v for k, v in data.get('queues', {}).items()}
+                            user_notifications = {int(k): v for k, v in data.get('notifications', {}).items()}
+                            
+                            # Restore last update time
+                            if 'last_update' in data and data['last_update']:
+                                try:
+                                    last_update = datetime.fromisoformat(data['last_update'])
+                                    logger.info(f"Restored last update time from Gist: {last_update}")
+                                except Exception as e:
+                                    logger.warning(f"Could not restore last update time: {e}")
+                            
+                            logger.info(f"Loaded preferences from Gist for {len(user_queue_preferences)} users")
+                            
+                            # Also save to local file as backup
+                            save_preferences_local()
+                            return
         except Exception as e:
             logger.warning(f"Failed to load from GitHub Gist: {e}. Falling back to local file.")
     
@@ -131,7 +132,7 @@ def load_preferences() -> None:
         logger.error(f"Failed to load preferences: {e}")
 
 
-def save_preferences() -> None:
+async def save_preferences() -> None:
     """Save user preferences to JSON file and GitHub Gist."""
     # Save to local file first
     save_preferences_local()
@@ -159,16 +160,17 @@ def save_preferences() -> None:
                 }
             }
             
-            response = requests.patch(
-                f'https://api.github.com/gists/{GIST_ID}',
-                headers=headers,
-                json=payload
-            )
-            
-            if response.status_code == 200:
-                logger.debug("User preferences saved to GitHub Gist")
-            else:
-                logger.warning(f"Failed to save to Gist: {response.status_code}")
+            timeout = ClientTimeout(total=10)
+            async with ClientSession(timeout=timeout) as session:
+                async with session.patch(
+                    f'https://api.github.com/gists/{GIST_ID}',
+                    headers=headers,
+                    json=payload
+                ) as response:
+                    if response.status == 200:
+                        logger.debug("User preferences saved to GitHub Gist")
+                    else:
+                        logger.warning(f"Failed to save to Gist: {response.status}")
         except Exception as e:
             logger.warning(f"Failed to save to GitHub Gist: {e}")
 
@@ -385,7 +387,7 @@ async def update_schedule(context) -> None:
             last_update = datetime.now()
             logger.warning("No updatedOn timestamps found, using current time")
         
-        save_preferences()  # Save last update time
+        await save_preferences()  # Save last update time
     else:
         logger.warning("Failed to update schedule")
 
@@ -659,7 +661,7 @@ async def queue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if callback_data == "queue_all":
         # Clear user preference
         user_queue_preferences[user_id] = None
-        save_preferences()
+        await save_preferences()
         await query.edit_message_text(
             "✅ Налаштування скинуто!\n\n"
             "Тепер /myqueue буде показувати всі черги.\n"
@@ -673,7 +675,7 @@ async def queue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Enable notifications for this user
         chat_id = update.effective_chat.id
         user_notifications[user_id] = chat_id
-        save_preferences()
+        await save_preferences()
         
         await query.edit_message_text(
             f"✅ Черга *{queue_name}* збережена!\n\n"
@@ -904,7 +906,7 @@ async def notifications_callback(update: Update, context: ContextTypes.DEFAULT_T
         
         chat_id = update.effective_chat.id
         user_notifications[user_id] = chat_id
-        save_preferences()
+        await save_preferences()
         
         await query.edit_message_text(
             f"✅ Сповіщення включені для черги *{queue_name}*\n\n"
@@ -917,7 +919,7 @@ async def notifications_callback(update: Update, context: ContextTypes.DEFAULT_T
         if user_id in user_notifications:
             queue_name = user_queue_preferences.get(user_id, "невідома")
             del user_notifications[user_id]
-            save_preferences()
+            await save_preferences()
             
             await query.edit_message_text(
                 f"❌ Сповіщення вимкнені для черги *{queue_name}*\n\n"
@@ -934,7 +936,7 @@ async def post_init(application: Application) -> None:
     global schedule_data, last_fetch
     
     # Load saved user preferences
-    load_preferences()
+    await load_preferences()
     
     # Try to load cached schedule (with updatedOn timestamps)
     cached_schedule = load_schedule_cache()
