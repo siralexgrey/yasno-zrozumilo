@@ -1123,6 +1123,10 @@ def main() -> None:
                 
                 logger.info("Bot started in webhook mode")
                 
+                # Manually call post_init since it doesn't run automatically in custom webhook mode
+                logger.info("Manually calling post_init for webhook mode...")
+                await post_init(application)
+                
                 # Trigger initial schedule fetch immediately after bot starts
                 logger.info("Triggering initial schedule fetch...")
                 await update_schedule(application)
