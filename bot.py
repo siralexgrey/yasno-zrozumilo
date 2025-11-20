@@ -97,7 +97,9 @@ async def load_preferences() -> None:
                                 except Exception as e:
                                     logger.warning(f"Could not restore last update time: {e}")
                             
-                            logger.info(f"Loaded preferences from Gist for {len(user_queue_preferences)} users")
+                            logger.info(f"✅ Successfully loaded from Gist: {len(user_queue_preferences)} users with queues, {len(user_notifications)} with notifications")
+                            logger.info(f"Loaded queues: {user_queue_preferences}")
+                            logger.info(f"Loaded notifications: {user_notifications}")
                             
                             # Also save to local file as backup
                             save_preferences_local()
@@ -136,6 +138,10 @@ async def load_preferences() -> None:
 
 async def save_preferences() -> None:
     """Save user preferences to JSON file and GitHub Gist."""
+    logger.info(f"💾 Saving preferences: {len(user_queue_preferences)} queues, {len(user_notifications)} notifications")
+    logger.info(f"Queues being saved: {user_queue_preferences}")
+    logger.info(f"Notifications being saved: {user_notifications}")
+    
     # Save to local file first
     save_preferences_local()
     
