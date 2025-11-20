@@ -13,7 +13,7 @@ import sys
 import atexit
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
-from aiohttp import web
+from aiohttp import web, ClientSession, ClientTimeout
 import requests
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
@@ -234,19 +234,21 @@ def load_schedule_cache() -> Optional[Dict[str, Any]]:
 
 async def fetch_schedule() -> Optional[Dict[str, Any]]:
     """
-    Fetch the power outage schedule from Yasno API.
+    Fetch the power outage schedule from Yasno API using aiohttp.
     
     Returns:
         Dictionary with schedule data or None if request fails
     """
     try:
-        response = requests.get(API_URL, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        logger.info("Successfully fetched schedule from API")
-        save_schedule_cache(data)  # Save to cache with updatedOn timestamps
-        return data
-    except requests.exceptions.RequestException as e:
+        timeout = ClientTimeout(total=10)
+        async with ClientSession(timeout=timeout) as session:
+            async with session.get(API_URL) as response:
+                response.raise_for_status()
+                data = await response.json()
+                logger.info("Successfully fetched schedule from API")
+                save_schedule_cache(data)  # Save to cache with updatedOn timestamps
+                return data
+    except Exception as e:
         logger.error(f"Error fetching schedule: {e}")
         return None
 
@@ -1071,20 +1073,88 @@ def main() -> None:
                 logger.info(f"Webhook set to: {webhook_url}/webhook")
             except Exception as e:
                 logger.error(f"Failed to set webhook: {e}")
-    
-    # Start health server
-    asyncio.get_event_loop().run_until_complete(start_health_server())
-    
-    # Start the bot
-    logger.info("Starting bot...")
+        
+        return runner
     
     # Use webhook mode on Koyeb, polling locally
     if os.getenv('WEBHOOK_URL'):
         logger.info("Running in webhook mode (Koyeb)")
-        # Start and run forever (webhook mode)
-        asyncio.get_event_loop().run_until_complete(application.initialize())
-        asyncio.get_event_loop().run_until_complete(application.start())
-        asyncio.get_event_loop().run_forever()
+        
+        # Create new event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Store runner for cleanup
+        runner = None
+        
+        async def run_webhook():
+            nonlocal runner
+            try:
+                # Start health server
+                runner = await start_health_server()
+                
+                # Initialize and start application
+                await application.initialize()
+                await application.start()
+                
+                logger.info("Bot started in webhook mode")
+                
+                # Run forever
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                logger.info("Received shutdown signal")
+            finally:
+                logger.info("Shutting down gracefully...")
+                
+                # Stop the application first
+                try:
+                    await application.stop()
+                    logger.info("Application stopped")
+                except Exception as e:
+                    logger.error(f"Error stopping application: {e}")
+                
+                # Clean up runner
+                if runner:
+                    try:
+                        await runner.cleanup()
+                        logger.info("Web runner cleaned up")
+                    except Exception as e:
+                        logger.error(f"Error cleaning up runner: {e}")
+                
+                # Shutdown the application
+                try:
+                    await application.shutdown()
+                    logger.info("Application shutdown complete")
+                except Exception as e:
+                    logger.error(f"Error shutting down application: {e}")
+        
+        # Set up signal handlers
+        def signal_handler(signum, frame):
+            logger.info(f"Received signal {signum}")
+            # Cancel all tasks
+            for task in asyncio.all_tasks(loop):
+                task.cancel()
+        
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+        
+        try:
+            loop.run_until_complete(run_webhook())
+        except KeyboardInterrupt:
+            logger.info("Received keyboard interrupt")
+        finally:
+            # Cancel all remaining tasks
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            
+            # Wait for all tasks to complete cancellation
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            
+            # Close the loop
+            loop.close()
+            logger.info("Event loop closed")
     else:
         logger.info("Running in polling mode (local)")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
