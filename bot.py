@@ -288,7 +288,14 @@ def has_schedule_changed(old_data: Dict[str, Any], new_data: Dict[str, Any], que
     new_updated = new_queue.get('updatedOn', '')
     
     if old_updated != new_updated:
-        changes.append(f"Графік оновлено: {new_updated[:16]}")
+        # Format the date nicely: "2025-11-20T15:09:44+02:00" -> "20.11.2025 15:09"
+        try:
+            updated_dt = datetime.fromisoformat(new_updated)
+            formatted_date = updated_dt.strftime('%d.%m.%Y %H:%M')
+            changes.append(f"Графік оновлено: {formatted_date}")
+        except Exception:
+            # Fallback to truncated string if parsing fails
+            changes.append(f"Графік оновлено: {new_updated[:16]}")
     
     # Check if tomorrow's schedule appeared
     old_tomorrow = old_queue.get('tomorrow', {})
@@ -349,6 +356,26 @@ async def notify_users_of_changes(application: Application, old_data: Dict[str, 
                 logger.info(f"Sent notification to user {user_id} for queue {queue_name}")
             except Exception as e:
                 logger.error(f"Failed to send notification to user {user_id}: {e}")
+
+
+async def keep_alive_ping(context) -> None:
+    """
+    Periodic task to ping the health endpoint and prevent Koyeb from sleeping.
+    Runs every 4 minutes (before the 5-minute sleep timeout).
+    """
+    try:
+        port = int(os.getenv('PORT', 8000))
+        url = f"http://localhost:{port}/health"
+        
+        timeout = ClientTimeout(total=5)
+        async with ClientSession(timeout=timeout) as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    logger.info("✅ Keep-alive ping successful")
+                else:
+                    logger.warning(f"Keep-alive ping returned status {response.status}")
+    except Exception as e:
+        logger.error(f"Keep-alive ping failed: {e}")
 
 
 async def update_schedule(context) -> None:
@@ -996,6 +1023,17 @@ async def post_init(application: Application) -> None:
             interval=UPDATE_INTERVAL,
             first=first_run
         )
+        
+        # Schedule keep-alive pings every 4 minutes (before Koyeb's 5-minute timeout)
+        # Only in webhook mode (Koyeb)
+        if os.getenv('WEBHOOK_URL'):
+            job_queue.run_repeating(
+                keep_alive_ping,
+                interval=240,  # 4 minutes
+                first=60  # Start after 1 minute
+            )
+            logger.info("✅ Scheduled keep-alive pings every 4 minutes")
+        
         logger.info("✅ post_init complete: Scheduled periodic updates every 10 minutes")
     except Exception as e:
         logger.error(f"❌ FATAL ERROR in post_init: {e}", exc_info=True)
