@@ -39,7 +39,7 @@ GITHUB_TOKEN=ghp_your_token_here
 GIST_ID=your_gist_id_here
 ```
 
-See [PERSISTENT_STORAGE.md](PERSISTENT_STORAGE.md) for Gist setup.
+See [README.md](README.md#-persistent-storage-important) for Gist setup instructions.
 
 ### 4. **Configure Service**
 - **Service name**: `yasno-bot` (or your choice)

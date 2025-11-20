@@ -67,8 +67,6 @@ python bot.py
 2. Тепер завжди використовуйте: `/myqueue` - побачите тільки вашу чергу!
 3. Або перевірте іншу чергу: `/schedule 3.2`
 
-Детальніше про фільтрацію читайте в [QUEUE_FILTERING.md](QUEUE_FILTERING.md)
-
 ## Використання в групових чатах
 
 Бот підтримує роботу в групових чатах. Просто додайте його до групи і використовуйте команди як зазвичай.
@@ -121,12 +119,28 @@ Koyeb free tier has ephemeral storage - user preferences reset on redeploy.
 
 **Solution**: Use GitHub Gist (100% free) for persistent storage.
 
-See setup guide: [PERSISTENT_STORAGE.md](PERSISTENT_STORAGE.md)
+#### Setup Steps:
 
-Quick setup:
-1. Create GitHub Personal Access Token with `gist` scope
-2. Create a secret Gist with `user_preferences.json`
-3. Add `GITHUB_TOKEN` and `GIST_ID` to Koyeb environment variables
+1. **Create GitHub Personal Access Token:**
+   - Go to https://github.com/settings/tokens
+   - Click **"Generate new token (classic)"**
+   - Name: `Yasno Bot Storage`
+   - Scope: Check only `gist`
+   - Click **"Generate token"** and copy it
+
+2. **Create a GitHub Gist:**
+   - Go to https://gist.github.com
+   - Click **"+ New gist"**
+   - Filename: `user_preferences.json`
+   - Content: `{}`
+   - Create as **Secret gist**
+   - Copy the Gist ID from URL: `https://gist.github.com/USERNAME/abc123...` (the last part)
+
+3. **Add to Koyeb Environment Variables:**
+   ```
+   GITHUB_TOKEN=ghp_your_token_here
+   GIST_ID=your_gist_id_here
+   ```
 
 Now user preferences persist across redeploys! ✅
 
