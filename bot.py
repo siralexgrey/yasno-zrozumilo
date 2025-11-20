@@ -944,58 +944,62 @@ async def post_init(application: Application) -> None:
     """
     Initialize the bot - fetch initial data and schedule periodic updates.
     """
-    global schedule_data, last_fetch
-    
-    logger.info("🚀 Starting post_init - loading preferences and scheduling updates...")
-    
-    # Load saved user preferences
-    await load_preferences()
-    
-    # Try to load cached schedule (with updatedOn timestamps)
-    cached_schedule = load_schedule_cache()
-    if cached_schedule:
-        schedule_data = cached_schedule
-        logger.info("Using cached schedule data")
-    
-    # Don't fetch in post_init for webhook mode - it will be done after start
-    # Only fetch for polling mode
-    if not os.getenv('WEBHOOK_URL'):
-        logger.info("Polling mode: fetching initial schedule in post_init")
-        await update_schedule(application)
-    
-    # Calculate when next update should happen
-    # If last fetch is old (more than UPDATE_INTERVAL ago), schedule immediately
-    # Otherwise schedule for UPDATE_INTERVAL after last fetch
-    if last_fetch:
-        from datetime import timezone as tz
-        now = datetime.now(tz.utc)
-        if last_fetch.tzinfo is None:
-            last_fetch_aware = last_fetch.replace(tzinfo=tz.utc)
-        else:
-            last_fetch_aware = last_fetch.astimezone(tz.utc)
+    try:
+        global schedule_data, last_fetch
         
-        time_since_fetch = (now - last_fetch_aware).total_seconds()
+        logger.info("🚀 Starting post_init - loading preferences and scheduling updates...")
         
-        if time_since_fetch >= UPDATE_INTERVAL:
-            # Last fetch was too long ago, schedule next update immediately
-            first_run = 10  # Run in 10 seconds
-            logger.info("Last fetch was old, scheduling immediate update")
+        # Load saved user preferences
+        await load_preferences()
+        
+        # Try to load cached schedule (with updatedOn timestamps)
+        cached_schedule = load_schedule_cache()
+        if cached_schedule:
+            schedule_data = cached_schedule
+            logger.info("Using cached schedule data")
+        
+        # Don't fetch in post_init for webhook mode - it will be done after start
+        # Only fetch for polling mode
+        if not os.getenv('WEBHOOK_URL'):
+            logger.info("Polling mode: fetching initial schedule in post_init")
+            await update_schedule(application)
+        
+        # Calculate when next update should happen
+        # If last fetch is old (more than UPDATE_INTERVAL ago), schedule immediately
+        # Otherwise schedule for UPDATE_INTERVAL after last fetch
+        if last_fetch:
+            from datetime import timezone as tz
+            now = datetime.now(tz.utc)
+            if last_fetch.tzinfo is None:
+                last_fetch_aware = last_fetch.replace(tzinfo=tz.utc)
+            else:
+                last_fetch_aware = last_fetch.astimezone(tz.utc)
+            
+            time_since_fetch = (now - last_fetch_aware).total_seconds()
+            
+            if time_since_fetch >= UPDATE_INTERVAL:
+                # Last fetch was too long ago, schedule next update immediately
+                first_run = 10  # Run in 10 seconds
+                logger.info("Last fetch was old, scheduling immediate update")
+            else:
+                # Schedule next update at the proper interval
+                first_run = UPDATE_INTERVAL - time_since_fetch
+                logger.info(f"Scheduling next update in {int(first_run/60)} minutes")
         else:
-            # Schedule next update at the proper interval
-            first_run = UPDATE_INTERVAL - time_since_fetch
-            logger.info(f"Scheduling next update in {int(first_run/60)} minutes")
-    else:
-        # No last fetch, schedule for UPDATE_INTERVAL from now
-        first_run = UPDATE_INTERVAL
-    
-    # Schedule periodic updates every 10 minutes
-    job_queue = application.job_queue
-    job_queue.run_repeating(
-        update_schedule,
-        interval=UPDATE_INTERVAL,
-        first=first_run
-    )
-    logger.info("Scheduled periodic updates every 10 minutes")
+            # No last fetch, schedule for UPDATE_INTERVAL from now
+            first_run = UPDATE_INTERVAL
+        
+        # Schedule periodic updates every 10 minutes
+        job_queue = application.job_queue
+        job_queue.run_repeating(
+            update_schedule,
+            interval=UPDATE_INTERVAL,
+            first=first_run
+        )
+        logger.info("✅ post_init complete: Scheduled periodic updates every 10 minutes")
+    except Exception as e:
+        logger.error(f"❌ FATAL ERROR in post_init: {e}", exc_info=True)
+        raise
 
 
 async def handle_keyboard_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
