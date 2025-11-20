@@ -70,7 +70,7 @@ async def load_preferences() -> None:
     # Try to load from GitHub Gist first (persistent storage)
     if GITHUB_TOKEN and GIST_ID:
         try:
-            logger.info("Loading preferences from GitHub Gist...")
+            logger.info(f"Loading preferences from GitHub Gist (ID: {GIST_ID[:8]}...)...")
             headers = {
                 'Authorization': f'token {GITHUB_TOKEN}',
                 'Accept': 'application/vnd.github.v3+json'
@@ -104,6 +104,8 @@ async def load_preferences() -> None:
                             return
         except Exception as e:
             logger.warning(f"Failed to load from GitHub Gist: {e}. Falling back to local file.")
+    else:
+        logger.info(f"GitHub Gist not configured (Token: {'set' if GITHUB_TOKEN else 'missing'}, Gist ID: {'set' if GIST_ID else 'missing'})")
     
     # Fallback to local file
     if not os.path.exists(PREFERENCES_FILE):
