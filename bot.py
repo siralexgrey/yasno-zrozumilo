@@ -89,10 +89,17 @@ async def load_preferences() -> None:
                             user_queue_preferences = {int(k): v for k, v in data.get('queues', {}).items()}
                             user_notifications = {int(k): v for k, v in data.get('notifications', {}).items()}
                             
-                            # Restore last update time
+                            # Restore last update time with proper timezone
                             if 'last_update' in data and data['last_update']:
                                 try:
+                                    from datetime import timezone, timedelta as td
+                                    schedule_tz = timezone(td(hours=2))
                                     last_update = datetime.fromisoformat(data['last_update'])
+                                    # Ensure timezone is set to +02:00
+                                    if last_update.tzinfo is None:
+                                        last_update = last_update.replace(tzinfo=schedule_tz)
+                                    else:
+                                        last_update = last_update.astimezone(schedule_tz)
                                     logger.info(f"Restored last update time from Gist: {last_update}")
                                 except Exception as e:
                                     logger.warning(f"Could not restore last update time: {e}")
@@ -122,10 +129,17 @@ async def load_preferences() -> None:
         user_queue_preferences = {int(k): v for k, v in data.get('queues', {}).items()}
         user_notifications = {int(k): v for k, v in data.get('notifications', {}).items()}
         
-        # Restore last update time
+        # Restore last update time with proper timezone
         if 'last_update' in data and data['last_update']:
             try:
+                from datetime import timezone, timedelta as td
+                schedule_tz = timezone(td(hours=2))
                 last_update = datetime.fromisoformat(data['last_update'])
+                # Ensure timezone is set to +02:00
+                if last_update.tzinfo is None:
+                    last_update = last_update.replace(tzinfo=schedule_tz)
+                else:
+                    last_update = last_update.astimezone(schedule_tz)
                 logger.info(f"Restored last update time: {last_update}")
             except Exception as e:
                 logger.warning(f"Could not restore last update time: {e}")
