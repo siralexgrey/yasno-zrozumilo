@@ -125,6 +125,28 @@ To persist data, upgrade to paid plan with persistent volumes.
 
 ---
 
+## 📈 Prevent Sleep Mode (IMPORTANT!)
+
+Koyeb free tier goes to sleep after 5 minutes of no external traffic. You need an external service to keep it awake.
+
+### **Setup Cron-Job.org (Free)**
+
+1. Go to https://cron-job.org
+2. Create free account
+3. Click **"Create cronjob"**
+4. Configure:
+   - **Title**: `Yasno Bot Keep-Alive`
+   - **URL**: `https://your-koyeb-app-url.koyeb.app/health`
+   - **Schedule**: Every 5 minutes
+   - **Enabled**: Yes
+5. Click **"Create"**
+
+**Your Koyeb URL**: Found in Koyeb dashboard → your service → copy the public URL
+
+Now your bot stays awake 24/7! ✅
+
+---
+
 ## 📈 Optional: UptimeRobot Monitoring
 
 1. Go to https://uptimerobot.com

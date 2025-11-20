@@ -516,26 +516,6 @@ async def notify_users_of_changes(application: Application, old_data: Dict[str, 
                 logger.error(f"Failed to send notification to user {user_id}: {e}")
 
 
-async def keep_alive_ping(context) -> None:
-    """
-    Periodic task to ping the health endpoint and prevent Koyeb from sleeping.
-    Runs every 4 minutes (before the 5-minute sleep timeout).
-    """
-    try:
-        port = int(os.getenv('PORT', 8000))
-        url = f"http://localhost:{port}/health"
-        
-        timeout = ClientTimeout(total=5)
-        async with ClientSession(timeout=timeout) as session:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    logger.info("✅ Keep-alive ping successful")
-                else:
-                    logger.warning(f"Keep-alive ping returned status {response.status}")
-    except Exception as e:
-        logger.error(f"Keep-alive ping failed: {e}")
-
-
 async def update_schedule(context) -> None:
     """
     Background task to update the schedule every 10 minutes for all cities.
@@ -1363,16 +1343,6 @@ async def post_init(application: Application) -> None:
             interval=UPDATE_INTERVAL,
             first=first_run
         )
-        
-        # Schedule keep-alive pings every 4 minutes (before Koyeb's 5-minute timeout)
-        # Only in webhook mode (Koyeb)
-        if os.getenv('WEBHOOK_URL'):
-            job_queue.run_repeating(
-                keep_alive_ping,
-                interval=240,  # 4 minutes
-                first=60  # Start after 1 minute
-            )
-            logger.info("✅ Scheduled keep-alive pings every 4 minutes")
         
         logger.info("✅ post_init complete: Scheduled periodic updates every 10 minutes")
     except Exception as e:
