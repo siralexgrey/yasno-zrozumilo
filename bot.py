@@ -242,16 +242,18 @@ async def fetch_schedule() -> Optional[Dict[str, Any]]:
         Dictionary with schedule data or None if request fails
     """
     try:
+        logger.info(f"Fetching schedule from API: {API_URL}")
         timeout = ClientTimeout(total=10)
         async with ClientSession(timeout=timeout) as session:
             async with session.get(API_URL) as response:
+                logger.info(f"API response status: {response.status}")
                 response.raise_for_status()
                 data = await response.json()
-                logger.info("Successfully fetched schedule from API")
+                logger.info(f"Successfully fetched schedule from API - {len(data)} queues")
                 save_schedule_cache(data)  # Save to cache with updatedOn timestamps
                 return data
     except Exception as e:
-        logger.error(f"Error fetching schedule: {e}")
+        logger.error(f"Error fetching schedule: {e}", exc_info=True)
         return None
 
 
@@ -944,8 +946,11 @@ async def post_init(application: Application) -> None:
         schedule_data = cached_schedule
         logger.info("Using cached schedule data")
     
-    # Fetch initial schedule (will update cache if successful)
-    await update_schedule(application)
+    # Don't fetch in post_init for webhook mode - it will be done after start
+    # Only fetch for polling mode
+    if not os.getenv('WEBHOOK_URL'):
+        logger.info("Polling mode: fetching initial schedule in post_init")
+        await update_schedule(application)
     
     # Calculate when next update should happen
     # If last fetch is old (more than UPDATE_INTERVAL ago), schedule immediately
@@ -972,7 +977,7 @@ async def post_init(application: Application) -> None:
         # No last fetch, schedule for UPDATE_INTERVAL from now
         first_run = UPDATE_INTERVAL
     
-    # Schedule periodic updates every 30 minutes
+    # Schedule periodic updates every 10 minutes
     job_queue = application.job_queue
     job_queue.run_repeating(
         update_schedule,
@@ -1102,6 +1107,10 @@ def main() -> None:
                 await application.start()
                 
                 logger.info("Bot started in webhook mode")
+                
+                # Trigger initial schedule fetch immediately after bot starts
+                logger.info("Triggering initial schedule fetch...")
+                await update_schedule(application)
                 
                 # Run forever
                 await asyncio.Event().wait()
