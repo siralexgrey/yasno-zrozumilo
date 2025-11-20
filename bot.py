@@ -946,6 +946,8 @@ async def post_init(application: Application) -> None:
     """
     global schedule_data, last_fetch
     
+    logger.info("🚀 Starting post_init - loading preferences and scheduling updates...")
+    
     # Load saved user preferences
     await load_preferences()
     
