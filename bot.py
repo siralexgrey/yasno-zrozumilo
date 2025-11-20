@@ -35,8 +35,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# API Configuration
-API_URL = "https://app.yasno.ua/api/blackout-service/public/shutdowns/regions/3/dsos/301/planned-outages"
+# API Configuration - Multiple cities support
+CITIES = {
+    'dnipro': {
+        'name': 'Дніпро',
+        'api_url': 'https://app.yasno.ua/api/blackout-service/public/shutdowns/regions/3/dsos/301/planned-outages'
+    },
+    'kyiv': {
+        'name': 'Київ',
+        'api_url': 'https://app.yasno.ua/api/blackout-service/public/shutdowns/regions/25/dsos/902/planned-outages'
+    }
+}
+
 UPDATE_INTERVAL = 600  # 10 minutes in seconds
 
 # Persistent storage file paths
@@ -47,35 +57,46 @@ SCHEDULE_CACHE_FILE = "schedule_cache.json"
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
 GIST_ID = os.getenv('GIST_ID')
 
-# Global storage for schedule data
-schedule_data: Optional[Dict[str, Any]] = None
-last_update: Optional[datetime] = None  # When data was updated in Yasno API (from updatedOn)
-last_fetch: Optional[datetime] = None  # When we last fetched data from API
+# Global storage for schedule data (per city)
+schedule_data: Dict[str, Optional[Dict[str, Any]]] = {'dnipro': None, 'kyiv': None}
+last_update: Dict[str, Optional[datetime]] = {'dnipro': None, 'kyiv': None}  # When data was updated in Yasno API (from updatedOn)
+last_fetch: Dict[str, Optional[datetime]] = {'dnipro': None, 'kyiv': None}  # When we last fetched data from API
 
 # User preferences for queue filtering (user_id -> queue_name)
 user_queue_preferences: Dict[int, Optional[str]] = {}
+
+# User city selection (user_id -> city_code)
+user_city_preferences: Dict[int, str] = {}
 
 # User notification preferences (user_id -> chat_id)
 # Stores chat IDs of users who want automatic notifications
 user_notifications: Dict[int, int] = {}
 
 # Previous schedule state for change detection
-previous_schedule_data: Optional[Dict[str, Any]] = None
+previous_schedule_data: Dict[str, Optional[Dict[str, Any]]] = {'dnipro': None, 'kyiv': None}
 
 
-def get_main_keyboard() -> ReplyKeyboardMarkup:
+def get_main_keyboard(has_city: bool = True) -> ReplyKeyboardMarkup:
     """Get the main reply keyboard for the bot."""
-    keyboard = [
-        ["📋 Графік", "🔸 Моя черга"],
-        ["⚙️ Вибрати чергу", "🔔 Сповіщення"],
-        ["📊 Статус", "ℹ️ Довідка"]
-    ]
+    if has_city:
+        keyboard = [
+            ["📋 Графік", "🔸 Моя черга"],
+            ["🏙️ Місто", "⚙️ Вибрати чергу"],
+            ["🔔 Сповіщення", "📊 Статус"],
+            ["ℹ️ Довідка"]
+        ]
+    else:
+        # Minimal keyboard when city is not selected
+        keyboard = [
+            ["🏙️ Вибрати місто"],
+            ["ℹ️ Довідка"]
+        ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
 
 async def load_preferences() -> None:
     """Load user preferences from JSON file or GitHub Gist."""
-    global user_queue_preferences, user_notifications, last_update
+    global user_queue_preferences, user_notifications, user_city_preferences, last_update
     
     # Try to load from GitHub Gist first (persistent storage)
     if GITHUB_TOKEN and GIST_ID:
@@ -98,25 +119,45 @@ async def load_preferences() -> None:
                             # Convert string keys back to integers
                             user_queue_preferences = {int(k): v for k, v in data.get('queues', {}).items()}
                             user_notifications = {int(k): v for k, v in data.get('notifications', {}).items()}
+                            user_city_preferences = {int(k): v for k, v in data.get('cities', {}).items()}
                             
-                            # Restore last update time with proper timezone
+                            # Restore last update time with proper timezone - for backward compatibility
                             if 'last_update' in data and data['last_update']:
                                 try:
                                     from datetime import timezone, timedelta as td
                                     schedule_tz = timezone(td(hours=2))
-                                    last_update = datetime.fromisoformat(data['last_update'])
+                                    last_update_dt = datetime.fromisoformat(data['last_update'])
                                     # Ensure timezone is set to +02:00
-                                    if last_update.tzinfo is None:
-                                        last_update = last_update.replace(tzinfo=schedule_tz)
+                                    if last_update_dt.tzinfo is None:
+                                        last_update_dt = last_update_dt.replace(tzinfo=schedule_tz)
                                     else:
-                                        last_update = last_update.astimezone(schedule_tz)
-                                    logger.info(f"Restored last update time from Gist: {last_update}")
+                                        last_update_dt = last_update_dt.astimezone(schedule_tz)
+                                    # Set for dnipro (legacy)
+                                    last_update['dnipro'] = last_update_dt
+                                    logger.info(f"Restored last update time from Gist: {last_update_dt}")
                                 except Exception as e:
                                     logger.warning(f"Could not restore last update time: {e}")
                             
-                            logger.info(f"✅ Successfully loaded from Gist: {len(user_queue_preferences)} users with queues, {len(user_notifications)} with notifications")
+                            # Restore per-city last update times
+                            if 'last_update_cities' in data:
+                                for city, update_time_str in data['last_update_cities'].items():
+                                    if update_time_str:
+                                        try:
+                                            from datetime import timezone, timedelta as td
+                                            schedule_tz = timezone(td(hours=2))
+                                            update_dt = datetime.fromisoformat(update_time_str)
+                                            if update_dt.tzinfo is None:
+                                                update_dt = update_dt.replace(tzinfo=schedule_tz)
+                                            else:
+                                                update_dt = update_dt.astimezone(schedule_tz)
+                                            last_update[city] = update_dt
+                                        except Exception as e:
+                                            logger.warning(f"Could not restore {city} update time: {e}")
+                            
+                            logger.info(f"✅ Successfully loaded from Gist: {len(user_queue_preferences)} users with queues, {len(user_notifications)} with notifications, {len(user_city_preferences)} with cities")
                             logger.info(f"Loaded queues: {user_queue_preferences}")
                             logger.info(f"Loaded notifications: {user_notifications}")
+                            logger.info(f"Loaded cities: {user_city_preferences}")
                             
                             # Also save to local file as backup
                             save_preferences_local()
@@ -138,33 +179,54 @@ async def load_preferences() -> None:
         # Convert string keys back to integers (JSON keys are always strings)
         user_queue_preferences = {int(k): v for k, v in data.get('queues', {}).items()}
         user_notifications = {int(k): v for k, v in data.get('notifications', {}).items()}
+        user_city_preferences = {int(k): v for k, v in data.get('cities', {}).items()}
         
-        # Restore last update time with proper timezone
+        # Restore last update time with proper timezone - for backward compatibility
         if 'last_update' in data and data['last_update']:
             try:
                 from datetime import timezone, timedelta as td
                 schedule_tz = timezone(td(hours=2))
-                last_update = datetime.fromisoformat(data['last_update'])
+                last_update_dt = datetime.fromisoformat(data['last_update'])
                 # Ensure timezone is set to +02:00
-                if last_update.tzinfo is None:
-                    last_update = last_update.replace(tzinfo=schedule_tz)
+                if last_update_dt.tzinfo is None:
+                    last_update_dt = last_update_dt.replace(tzinfo=schedule_tz)
                 else:
-                    last_update = last_update.astimezone(schedule_tz)
-                logger.info(f"Restored last update time: {last_update}")
+                    last_update_dt = last_update_dt.astimezone(schedule_tz)
+                # Set for dnipro (legacy)
+                last_update['dnipro'] = last_update_dt
+                logger.info(f"Restored last update time: {last_update_dt}")
             except Exception as e:
                 logger.warning(f"Could not restore last update time: {e}")
         
+        # Restore per-city last update times
+        if 'last_update_cities' in data:
+            for city, update_time_str in data['last_update_cities'].items():
+                if update_time_str:
+                    try:
+                        from datetime import timezone, timedelta as td
+                        schedule_tz = timezone(td(hours=2))
+                        update_dt = datetime.fromisoformat(update_time_str)
+                        if update_dt.tzinfo is None:
+                            update_dt = update_dt.replace(tzinfo=schedule_tz)
+                        else:
+                            update_dt = update_dt.astimezone(schedule_tz)
+                        last_update[city] = update_dt
+                    except Exception as e:
+                        logger.warning(f"Could not restore {city} update time: {e}")
+        
         logger.info(f"Loaded preferences for {len(user_queue_preferences)} users with queues")
         logger.info(f"Loaded notification settings for {len(user_notifications)} users")
+        logger.info(f"Loaded city preferences for {len(user_city_preferences)} users")
     except Exception as e:
         logger.error(f"Failed to load preferences: {e}")
 
 
 async def save_preferences() -> None:
     """Save user preferences to JSON file and GitHub Gist."""
-    logger.info(f"💾 Saving preferences: {len(user_queue_preferences)} queues, {len(user_notifications)} notifications")
+    logger.info(f"💾 Saving preferences: {len(user_queue_preferences)} queues, {len(user_notifications)} notifications, {len(user_city_preferences)} cities")
     logger.info(f"Queues being saved: {user_queue_preferences}")
     logger.info(f"Notifications being saved: {user_notifications}")
+    logger.info(f"Cities being saved: {user_city_preferences}")
     
     # Save to local file first
     save_preferences_local()
@@ -175,7 +237,12 @@ async def save_preferences() -> None:
             data = {
                 'queues': user_queue_preferences,
                 'notifications': user_notifications,
-                'last_update': last_update.isoformat() if last_update else None,
+                'cities': user_city_preferences,
+                'last_update': last_update['dnipro'].isoformat() if last_update.get('dnipro') else None,  # Legacy
+                'last_update_cities': {
+                    city: dt.isoformat() if dt else None
+                    for city, dt in last_update.items()
+                },
                 'last_saved': datetime.now().isoformat()
             }
             
@@ -213,7 +280,12 @@ def save_preferences_local() -> None:
         data = {
             'queues': user_queue_preferences,
             'notifications': user_notifications,
-            'last_update': last_update.isoformat() if last_update else None,
+            'cities': user_city_preferences,
+            'last_update': last_update['dnipro'].isoformat() if last_update.get('dnipro') else None,  # Legacy
+            'last_update_cities': {
+                city: dt.isoformat() if dt else None
+                for city, dt in last_update.items()
+            },
             'last_saved': datetime.now().isoformat()
         }
         
@@ -266,26 +338,35 @@ def load_schedule_cache() -> Optional[Dict[str, Any]]:
         return None
 
 
-async def fetch_schedule() -> Optional[Dict[str, Any]]:
+async def fetch_schedule(city: str = 'dnipro') -> Optional[Dict[str, Any]]:
     """
     Fetch the power outage schedule from Yasno API using aiohttp.
+    
+    Args:
+        city: City code ('dnipro' or 'kyiv')
     
     Returns:
         Dictionary with schedule data or None if request fails
     """
+    if city not in CITIES:
+        logger.error(f"Invalid city code: {city}")
+        return None
+    
+    api_url = CITIES[city]['api_url']
+    
     try:
-        logger.info(f"Fetching schedule from API: {API_URL}")
+        logger.info(f"Fetching schedule from API for {CITIES[city]['name']}: {api_url}")
         timeout = ClientTimeout(total=10)
         async with ClientSession(timeout=timeout) as session:
-            async with session.get(API_URL) as response:
+            async with session.get(api_url) as response:
                 logger.info(f"API response status: {response.status}")
                 response.raise_for_status()
                 data = await response.json()
-                logger.info(f"Successfully fetched schedule from API - {len(data)} queues")
+                logger.info(f"Successfully fetched schedule from API - {len(data)} queues for {CITIES[city]['name']}")
                 save_schedule_cache(data)  # Save to cache with updatedOn timestamps
                 return data
     except Exception as e:
-        logger.error(f"Error fetching schedule: {e}", exc_info=True)
+        logger.error(f"Error fetching schedule for {city}: {e}", exc_info=True)
         return None
 
 
@@ -314,7 +395,14 @@ def has_schedule_changed(old_data: Dict[str, Any], new_data: Dict[str, Any], que
     if old_updated != new_updated:
         # Format the date nicely: "2025-11-20T15:09:44+02:00" -> "20.11.2025 15:09"
         try:
+            from datetime import timezone, timedelta as td
+            schedule_tz = timezone(td(hours=2))
             updated_dt = datetime.fromisoformat(new_updated)
+            # Convert to +02:00 timezone if needed
+            if updated_dt.tzinfo is None:
+                updated_dt = updated_dt.replace(tzinfo=schedule_tz)
+            else:
+                updated_dt = updated_dt.astimezone(schedule_tz)
             formatted_date = updated_dt.strftime('%d.%m.%Y %H:%M')
             changes.append(f"Графік оновлено: {formatted_date}")
         except Exception:
@@ -343,9 +431,55 @@ def has_schedule_changed(old_data: Dict[str, Any], new_data: Dict[str, Any], que
     return len(changes) > 0, changes
 
 
+async def notify_users_of_changes_for_city(application: Application, old_data: Dict[str, Any], new_data: Dict[str, Any], city_code: str) -> None:
+    """
+    Notify users about schedule changes for their selected queues in a specific city.
+    """
+    if not user_notifications:
+        return
+    
+    for user_id, chat_id in user_notifications.items():
+        # Check if user has this city selected
+        user_city = user_city_preferences.get(user_id)
+        if user_city != city_code:
+            continue
+        
+        # Get user's preferred queue
+        queue_name = user_queue_preferences.get(user_id)
+        
+        if not queue_name:
+            continue
+        
+        # Check if schedule changed for this queue
+        changed, changes = has_schedule_changed(old_data, new_data, queue_name)
+        
+        if changed:
+            try:
+                # Format the notification message
+                city_name = CITIES[city_code]['name']
+                message = f"🔔 *Оновлення для {city_name}, черга {queue_name}*\n\n"
+                message += "\n".join(f"• {change}" for change in changes)
+                message += "\n\n"
+                
+                # Add updated schedule
+                formatted_schedule = format_schedule(new_data, queue_name, city_name)
+                message += formatted_schedule
+                
+                # Send notification
+                await application.bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    parse_mode='Markdown'
+                )
+                logger.info(f"Sent notification to user {user_id} for {city_name}, queue {queue_name}")
+            except Exception as e:
+                logger.error(f"Failed to send notification to user {user_id}: {e}")
+
+
 async def notify_users_of_changes(application: Application, old_data: Dict[str, Any], new_data: Dict[str, Any]) -> None:
     """
     Notify users about schedule changes for their selected queues.
+    LEGACY function - kept for backward compatibility.
     """
     if not user_notifications:
         return
@@ -404,54 +538,60 @@ async def keep_alive_ping(context) -> None:
 
 async def update_schedule(context) -> None:
     """
-    Background task to update the schedule every 30 minutes.
+    Background task to update the schedule every 10 minutes for all cities.
     Also sends notifications to users if their queue schedule changed.
     """
     global schedule_data, last_update, last_fetch, previous_schedule_data
     
-    logger.info("Updating schedule...")
-    data = await fetch_schedule()
+    logger.info("Updating schedule for all cities...")
     
-    if data:
-        # Record when we fetched the data
-        from datetime import timezone, timedelta as td
-        schedule_tz = timezone(td(hours=2))
-        last_fetch = datetime.now(schedule_tz)
+    # Get the application object (context can be Application or CallbackContext)
+    application = context if isinstance(context, Application) else context.application
+    
+    from datetime import timezone, timedelta as td
+    schedule_tz = timezone(td(hours=2))
+    
+    # Update schedule for each city
+    for city_code in CITIES.keys():
+        logger.info(f"Fetching schedule for {CITIES[city_code]['name']}...")
+        data = await fetch_schedule(city_code)
         
-        # Get the application object (context can be Application or CallbackContext)
-        application = context if isinstance(context, Application) else context.application
-        
-        # Check for changes and notify users
-        if schedule_data is not None and previous_schedule_data != data:
-            await notify_users_of_changes(application, previous_schedule_data, data)
-        
-        previous_schedule_data = schedule_data  # Store previous state
-        schedule_data = data
-        
-        # Extract the most recent updatedOn timestamp from all queues
-        updated_timestamps = []
-        for queue_name, queue_data in data.items():
-            if isinstance(queue_data, dict) and 'updatedOn' in queue_data:
-                try:
-                    updated_timestamps.append(datetime.fromisoformat(queue_data['updatedOn']))
-                except Exception as e:
-                    logger.warning(f"Could not parse updatedOn for queue {queue_name}: {e}")
-        
-        # Set last_update to the most recent updatedOn timestamp
-        if updated_timestamps:
-            last_update_utc = max(updated_timestamps)
-            # Convert from UTC (+00:00) to schedule timezone (+02:00)
-            last_update = last_update_utc.astimezone(schedule_tz)
-            logger.info(f"Schedule updated at {last_update} (from API updatedOn)")
-            logger.info(f"Data fetched at {last_fetch}")
+        if data:
+            # Record when we fetched the data
+            last_fetch[city_code] = datetime.now(schedule_tz)
+            
+            # Check for changes and notify users
+            if schedule_data[city_code] is not None and previous_schedule_data[city_code] != data:
+                # Only notify users who have this city selected
+                await notify_users_of_changes_for_city(application, previous_schedule_data[city_code], data, city_code)
+            
+            previous_schedule_data[city_code] = schedule_data[city_code]  # Store previous state
+            schedule_data[city_code] = data
+            
+            # Extract the most recent updatedOn timestamp from all queues
+            updated_timestamps = []
+            for queue_name, queue_data in data.items():
+                if isinstance(queue_data, dict) and 'updatedOn' in queue_data:
+                    try:
+                        updated_timestamps.append(datetime.fromisoformat(queue_data['updatedOn']))
+                    except Exception as e:
+                        logger.warning(f"Could not parse updatedOn for queue {queue_name} in {city_code}: {e}")
+            
+            # Set last_update to the most recent updatedOn timestamp
+            if updated_timestamps:
+                last_update_utc = max(updated_timestamps)
+                # Convert from UTC (+00:00) to schedule timezone (+02:00)
+                last_update[city_code] = last_update_utc.astimezone(schedule_tz)
+                logger.info(f"Schedule for {CITIES[city_code]['name']} updated at {last_update[city_code]} (from API updatedOn)")
+                logger.info(f"Data fetched at {last_fetch[city_code]}")
+            else:
+                last_update[city_code] = datetime.now(schedule_tz)
+                logger.warning(f"No updatedOn timestamps found for {city_code}, using current time")
         else:
-            last_update = datetime.now()
-            logger.warning("No updatedOn timestamps found, using current time")
-        
-        # Don't save preferences here - only save when user preferences actually change
-        # This prevents overwriting the Gist on every schedule update
-    else:
-        logger.warning("Failed to update schedule")
+            logger.warning(f"Failed to update schedule for {city_code}")
+    
+    logger.info("Schedule update complete for all cities")
+    # Don't save preferences here - only save when user preferences actually change
 
 
 def minutes_to_time(minutes: int) -> str:
@@ -475,13 +615,14 @@ def format_date_eastern(date_str: str) -> str:
         return date_str[:10] if date_str else ""
 
 
-def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None) -> str:
+def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None, city_name: Optional[str] = None) -> str:
     """
     Format the schedule data into a readable message.
     
     Args:
         data: Schedule data from API
         queue_filter: Optional queue name to filter (e.g., "1.1")
+        city_name: Optional city name to display in the header
         
     Returns:
         Formatted string for display
@@ -489,7 +630,13 @@ def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None) ->
     if not data:
         return "📋 Немає доступних даних про графік відключень"
     
-    message = "⚡️ *Графік планових відключень*\n\n"
+    message = "⚡️ *Графік планових відключень*\n"
+    
+    # Add city name if provided
+    if city_name:
+        message += f"🏙️ Місто: {city_name}\n"
+    
+    message += "\n"
     
     # Filter by queue if specified
     if queue_filter:
@@ -557,27 +704,84 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """
     Handle the /start command.
     """
-    welcome_message = (
-        "👋 Вітаю! Я бот Yasno Zrozumilo.\n\n"
-        "Я надаю інформацію про планові відключення електроенергії.\n\n"
-        "🔔 *Як використовувати сповіщення:*\n"
-        "1. Натисніть кнопку нижче щоб вибрати чергу\n"
-        "2. Натисніть кнопку щоб включити сповіщення\n"
-        "3. Ви будете отримувати оновлення кожні 10 хвилин!\n\n"
-        "Я працюю як в особистих повідомленнях, так і в групових чатах!"
-    )
+    user_id = update.effective_user.id
+    user_city = user_city_preferences.get(user_id)
     
-    await update.message.reply_text(welcome_message, reply_markup=get_main_keyboard(), parse_mode='Markdown')
+    if not user_city:
+        # User hasn't selected a city yet - prompt them to select
+        welcome_message = (
+            "👋 Вітаю! Я бот Yasno Zrozumilo.\n\n"
+            "Я надаю інформацію про планові відключення електроенергії.\n\n"
+            "🏙️ *Спочатку оберіть ваше місто:*"
+        )
+        
+        # Create inline keyboard with city options
+        keyboard = [
+            [InlineKeyboardButton("🏙️ Дніпро", callback_data="city_dnipro")],
+            [InlineKeyboardButton("🏙️ Київ", callback_data="city_kyiv")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            welcome_message,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    else:
+        # User has already selected a city
+        city_name = CITIES[user_city]['name']
+        welcome_message = (
+            f"👋 Вітаю! Я бот Yasno Zrozumilo.\n\n"
+            f"🏙️ Ваше місто: *{city_name}*\n\n"
+            "Я надаю інформацію про планові відключення електроенергії.\n\n"
+            "🔔 *Як використовувати сповіщення:*\n"
+            "1. Натисніть кнопку щоб вибрати чергу\n"
+            "2. Натисніть кнопку щоб включити сповіщення\n"
+            "3. Ви будете отримувати оновлення кожні 10 хвилин!\n\n"
+            "Ви можете змінити місто командою /city"
+        )
+        
+        await update.message.reply_text(welcome_message, reply_markup=get_main_keyboard(has_city=True), parse_mode='Markdown')
+
+
+async def city_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle the /city command - show city selection keyboard.
+    """
+    user_id = update.effective_user.id
+    current_city = user_city_preferences.get(user_id)
+    
+    # Create inline keyboard with city options
+    keyboard = [
+        [InlineKeyboardButton("🏙️ Дніпро", callback_data="city_dnipro")],
+        [InlineKeyboardButton("🏙️ Київ", callback_data="city_kyiv")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    message = "🏙️ *Виберіть ваше місто:*\n\n"
+    if current_city:
+        message += f"Поточне місто: *{CITIES[current_city]['name']}*\n\n"
+    message += "Виберіть місто зі списку нижче."
+    
+    await update.message.reply_text(
+        message,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Handle the /help command.
     """
+    user_id = update.effective_user.id
+    user_city = user_city_preferences.get(user_id)
+    
     help_message = (
         "ℹ️ *Допомога*\n\n"
         "*Команди:*\n"
         "/start - Початок роботи з ботом\n"
+        "/city - Вибрати місто\n"
         "/schedule - Отримати актуальний графік відключень\n"
         "/queue - Вибрати свою чергу\n"
         "/myqueue - Показати графік вашої черги\n"
@@ -585,15 +789,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/status - Перевірити статус оновлення даних\n"
         "/help - Показати цю довідку\n\n"
         "*Сповіщення:*\n"
-        "Коли ви вибрали чергу та включили сповіщення, ви будете отримувати:\n"
+        "Коли ви вибрали місто, чергу та включили сповіщення, ви будете отримувати:\n"
         "• Оновлення коли змінюється графік вашої черги\n"
         "• Сповіщення коли з'являється графік на завтра\n"
         "Перевірка відбувається кожні 10 хвилин.\n\n"
         "*Про бота:*\n"
         "Бот автоматично оновлює дані кожні 10 хвилин.\n"
-        "Можна використовувати в груповому чаті."
+        "Можна використовувати в груповому чаті.\n"
+        "Підтримуються міста: Дніпро, Київ."
     )
-    await update.message.reply_text(help_message, reply_markup=get_main_keyboard(), parse_mode='Markdown')
+    await update.message.reply_text(help_message, reply_markup=get_main_keyboard(has_city=bool(user_city)), parse_mode='Markdown')
 
 
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -603,10 +808,22 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """
     global schedule_data, last_update
     
-    if schedule_data is None:
+    user_id = update.effective_user.id
+    user_city = user_city_preferences.get(user_id)
+    
+    if not user_city:
+        await update.message.reply_text(
+            "❌ Спочатку виберіть місто командою /city",
+            reply_markup=get_main_keyboard(has_city=False)
+        )
+        return
+    
+    city_data = schedule_data.get(user_city)
+    
+    if city_data is None:
         await update.message.reply_text(
             "⏳ Завантажую дані... Спробуйте ще раз через кілька секунд.",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(has_city=True)
         )
         return
     
@@ -615,13 +832,15 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if context.args and len(context.args) > 0:
         queue_filter = context.args[0]
     
-    formatted_schedule = format_schedule(schedule_data, queue_filter)
+    city_name = CITIES[user_city]['name']
+    formatted_schedule = format_schedule(city_data, queue_filter, city_name)
     
-    if last_update:
-        time_info = f"\n\n🕐 Оновлено: {last_update.strftime('%d.%m.%Y %H:%M')}"
+    city_last_update = last_update.get(user_city)
+    if city_last_update:
+        time_info = f"\n\n🕐 Оновлено: {city_last_update.strftime('%d.%m.%Y %H:%M')}"
         formatted_schedule += time_info
     
-    await update.message.reply_text(formatted_schedule, reply_markup=get_main_keyboard(), parse_mode='Markdown')
+    await update.message.reply_text(formatted_schedule, reply_markup=get_main_keyboard(has_city=True), parse_mode='Markdown')
 
 
 async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -630,16 +849,28 @@ async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """
     global schedule_data
     
-    if schedule_data is None:
+    user_id = update.effective_user.id
+    user_city = user_city_preferences.get(user_id)
+    
+    if not user_city:
+        await update.message.reply_text(
+            "❌ Спочатку виберіть місто командою /city",
+            reply_markup=get_main_keyboard(has_city=False)
+        )
+        return
+    
+    city_data = schedule_data.get(user_city)
+    
+    if city_data is None:
         await update.message.reply_text(
             "⏳ Завантажую дані... Спробуйте ще раз через кілька секунд.",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(has_city=True)
         )
         return
     
     # Create inline keyboard with all available queues
     keyboard = []
-    queue_names = sorted(schedule_data.keys())
+    queue_names = sorted(city_data.keys())
     
     # Create rows with 3 buttons each
     row = []
@@ -658,12 +889,21 @@ async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    user_id = update.effective_user.id
     current_queue = user_queue_preferences.get(user_id)
+    city_name = CITIES[user_city]['name']
     
-    message = "🔸 *Виберіть свою чергу відключень:*\n\n"
+    # Get the appropriate outages link for the city
+    outages_links = {
+        'dnipro': 'https://static.yasno.ua/dnipro/outages',
+        'kyiv': 'https://static.yasno.ua/kyiv/outages'
+    }
+    outages_link = outages_links.get(user_city, 'https://yasno.ua')
+    
+    message = f"🏙️ Місто: *{city_name}*\n\n"
+    message += "🔸 *Виберіть свою чергу відключень:*\n\n"
     if current_queue:
         message += f"Поточна черга: *{current_queue}*\n\n"
+    message += f"❓ Не знаєте свою чергу? Перевірте тут:\n{outages_link}\n\n"
     message += "Після вибору команда /myqueue буде показувати тільки вашу чергу."
     
     await update.message.reply_text(
@@ -680,30 +920,77 @@ async def myqueue_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     global schedule_data, last_update
     
     user_id = update.effective_user.id
+    user_city = user_city_preferences.get(user_id)
+    
+    if not user_city:
+        await update.message.reply_text(
+            "❌ Спочатку виберіть місто командою /city",
+            reply_markup=get_main_keyboard(has_city=False)
+        )
+        return
+    
     queue_filter = user_queue_preferences.get(user_id)
     
     if not queue_filter:
         await update.message.reply_text(
             "❌ Ви ще не вибрали чергу.\n\n"
             "Використовуйте /queue щоб вибрати свою чергу.",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(has_city=True)
         )
         return
     
-    if schedule_data is None:
+    city_data = schedule_data.get(user_city)
+    
+    if city_data is None:
         await update.message.reply_text(
             "⏳ Завантажую дані... Спробуйте ще раз через кілька секунд.",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(has_city=True)
         )
         return
     
-    formatted_schedule = format_schedule(schedule_data, queue_filter)
+    city_name = CITIES[user_city]['name']
+    formatted_schedule = format_schedule(city_data, queue_filter, city_name)
     
-    if last_update:
-        time_info = f"\n\n🕐 Оновлено: {last_update.strftime('%d.%m.%Y %H:%M')}"
+    city_last_update = last_update.get(user_city)
+    if city_last_update:
+        time_info = f"\n\n🕐 Оновлено: {city_last_update.strftime('%d.%m.%Y %H:%M')}"
         formatted_schedule += time_info
     
-    await update.message.reply_text(formatted_schedule, reply_markup=get_main_keyboard(), parse_mode='Markdown')
+    await update.message.reply_text(formatted_schedule, reply_markup=get_main_keyboard(has_city=True), parse_mode='Markdown')
+
+
+async def city_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle callback queries from city selection buttons.
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    callback_data = query.data
+    
+    if callback_data.startswith("city_"):
+        # Set user city preference
+        city_code = callback_data.replace("city_", "")
+        
+        if city_code in CITIES:
+            user_city_preferences[user_id] = city_code
+            await save_preferences()
+            
+            city_name = CITIES[city_code]['name']
+            
+            await query.edit_message_text(
+                f"✅ Місто *{city_name}* збережено!\n\n"
+                f"Тепер ви можете вибрати чергу командою /queue\n\n"
+                "Ви можете змінити місто в будь-який час командою /city",
+                parse_mode='Markdown'
+            )
+            
+            # Send the main keyboard
+            await query.message.reply_text(
+                "Виберіть дію з меню нижче:",
+                reply_markup=get_main_keyboard(has_city=True)
+            )
 
 
 async def queue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -714,6 +1001,7 @@ async def queue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await query.answer()
     
     user_id = update.effective_user.id
+    user_city = user_city_preferences.get(user_id)
     callback_data = query.data
     
     if callback_data == "queue_all":
@@ -735,15 +1023,19 @@ async def queue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         user_notifications[user_id] = chat_id
         await save_preferences()
         
+        city_name = CITIES[user_city]['name'] if user_city else "вашого міста"
+        
         await query.edit_message_text(
             f"✅ Черга *{queue_name}* збережена!\n\n"
+            f"🏙️ Місто: {city_name}\n"
             f"Тепер команда /myqueue буде показувати тільки чергу {queue_name}.\n"
             f"🔔 Ви будете отримувати оновлення для цієї черги кожні 10 хвилин.\n\n"
             "Використовуйте:\n"
             f"• /myqueue - ваша черга ({queue_name})\n"
             "• /schedule - всі черги\n"
             f"• /schedule {queue_name} - конкретна черга\n"
-            "• /notifications - керувати сповіщеннями",
+            "• /notifications - керувати сповіщеннями\n"
+            "• /city - змінити місто",
             parse_mode='Markdown'
         )
 
@@ -754,15 +1046,29 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """
     global schedule_data, last_fetch
     
-    if last_fetch is None:
-        status_message = "⏳ Дані ще не завантажені"
+    user_id = update.effective_user.id
+    user_city = user_city_preferences.get(user_id)
+    
+    if not user_city:
+        await update.message.reply_text(
+            "❌ Спочатку виберіть місто командою /city",
+            reply_markup=get_main_keyboard(has_city=False)
+        )
+        return
+    
+    city_last_fetch = last_fetch.get(user_city)
+    city_data = schedule_data.get(user_city)
+    city_name = CITIES[user_city]['name']
+    
+    if city_last_fetch is None:
+        status_message = f"⏳ Дані для {city_name} ще не завантажені"
     else:
         # Make last_fetch timezone-aware if it's not already
-        if last_fetch.tzinfo is None:
+        if city_last_fetch.tzinfo is None:
             from datetime import timezone
-            last_fetch_aware = last_fetch.replace(tzinfo=timezone.utc)
+            last_fetch_aware = city_last_fetch.replace(tzinfo=timezone.utc)
         else:
-            last_fetch_aware = last_fetch
+            last_fetch_aware = city_last_fetch
         
         # Calculate next update time
         next_update = last_fetch_aware + timedelta(seconds=UPDATE_INTERVAL)
@@ -773,12 +1079,13 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         status_message = (
             f"✅ *Статус системи*\n\n"
+            f"🏙️ Місто: {city_name}\n"
             f"Останнє оновлення: {last_fetch_str}\n"
             f"Наступне оновлення: {next_update_str}\n"
-            f"Дані: {'✅ Доступні' if schedule_data else '❌ Недоступні'}"
+            f"Дані: {'✅ Доступні' if city_data else '❌ Недоступні'}"
         )
     
-    await update.message.reply_text(status_message, reply_markup=get_main_keyboard(), parse_mode='Markdown')
+    await update.message.reply_text(status_message, reply_markup=get_main_keyboard(has_city=True), parse_mode='Markdown')
 
 
 async def command_buttons_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1002,7 +1309,12 @@ async def post_init(application: Application) -> None:
         # Try to load cached schedule (with updatedOn timestamps)
         cached_schedule = load_schedule_cache()
         if cached_schedule:
-            schedule_data = cached_schedule
+            # For backward compatibility, cache might be old format (dict) or new format
+            # Set for dnipro by default if old format
+            if isinstance(cached_schedule, dict) and 'dnipro' not in cached_schedule:
+                schedule_data['dnipro'] = cached_schedule
+            else:
+                schedule_data = cached_schedule
             logger.info("Using cached schedule data")
         
         # Don't fetch in post_init for webhook mode - it will be done after start
@@ -1012,17 +1324,24 @@ async def post_init(application: Application) -> None:
             await update_schedule(application)
         
         # Calculate when next update should happen
-        # If last fetch is old (more than UPDATE_INTERVAL ago), schedule immediately
-        # Otherwise schedule for UPDATE_INTERVAL after last fetch
-        if last_fetch:
-            from datetime import timezone as tz
-            now = datetime.now(tz.utc)
-            if last_fetch.tzinfo is None:
-                last_fetch_aware = last_fetch.replace(tzinfo=tz.utc)
-            else:
-                last_fetch_aware = last_fetch.astimezone(tz.utc)
-            
-            time_since_fetch = (now - last_fetch_aware).total_seconds()
+        # Check all cities' last fetch times and use the oldest one
+        from datetime import timezone as tz
+        now = datetime.now(tz.utc)
+        
+        oldest_fetch_time = None
+        for city_code in CITIES.keys():
+            city_last_fetch = last_fetch.get(city_code)
+            if city_last_fetch:
+                if city_last_fetch.tzinfo is None:
+                    city_last_fetch = city_last_fetch.replace(tzinfo=tz.utc)
+                else:
+                    city_last_fetch = city_last_fetch.astimezone(tz.utc)
+                
+                if oldest_fetch_time is None or city_last_fetch < oldest_fetch_time:
+                    oldest_fetch_time = city_last_fetch
+        
+        if oldest_fetch_time:
+            time_since_fetch = (now - oldest_fetch_time).total_seconds()
             
             if time_since_fetch >= UPDATE_INTERVAL:
                 # Last fetch was too long ago, schedule next update immediately
@@ -1035,6 +1354,7 @@ async def post_init(application: Application) -> None:
         else:
             # No last fetch, schedule for UPDATE_INTERVAL from now
             first_run = UPDATE_INTERVAL
+            logger.info("No previous fetch found, scheduling update in 10 minutes")
         
         # Schedule periodic updates every 10 minutes
         job_queue = application.job_queue
@@ -1066,11 +1386,15 @@ async def handle_keyboard_buttons(update: Update, context: ContextTypes.DEFAULT_
     Works in both private and group chats.
     """
     text = update.message.text
+    user_id = update.effective_user.id
+    user_city = user_city_preferences.get(user_id)
     
     # Map button text to command handlers
     button_handlers = {
         "📋 Графік": schedule_command,
         "🔸 Моя черга": myqueue_command,
+        "🏙️ Місто": city_command,
+        "🏙️ Вибрати місто": city_command,
         "⚙️ Вибрати чергу": queue_command,
         "🔔 Сповіщення": notifications_command,
         "📊 Статус": status_command,
@@ -1080,6 +1404,14 @@ async def handle_keyboard_buttons(update: Update, context: ContextTypes.DEFAULT_
     # Get the handler for this button text
     handler = button_handlers.get(text)
     if handler:
+        # Check if user needs to select city first (except for city and help commands)
+        if not user_city and handler not in [city_command, help_command]:
+            await update.message.reply_text(
+                "❌ Спочатку виберіть місто командою /city",
+                reply_markup=get_main_keyboard(has_city=False)
+            )
+            return
+        
         await handler(update, context)
 
 
@@ -1100,6 +1432,7 @@ def main() -> None:
     # Register command handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("city", city_command))
     application.add_handler(CommandHandler("schedule", schedule_command))
     application.add_handler(CommandHandler("queue", queue_command))
     application.add_handler(CommandHandler("myqueue", myqueue_command))
@@ -1108,6 +1441,7 @@ def main() -> None:
     
     # Register callback query handlers for inline buttons
     application.add_handler(CallbackQueryHandler(command_buttons_callback, pattern="^cmd_"))
+    application.add_handler(CallbackQueryHandler(city_callback, pattern="^city_"))
     application.add_handler(CallbackQueryHandler(notifications_callback, pattern="^notif_"))
     application.add_handler(CallbackQueryHandler(queue_callback))
     
