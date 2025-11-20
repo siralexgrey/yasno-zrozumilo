@@ -170,7 +170,7 @@ async def save_preferences() -> None:
                     json=payload
                 ) as response:
                     if response.status == 200:
-                        logger.debug("User preferences saved to GitHub Gist")
+                        logger.info("User preferences saved to GitHub Gist")
                     else:
                         logger.warning(f"Failed to save to Gist: {response.status}")
         except Exception as e:
@@ -190,7 +190,7 @@ def save_preferences_local() -> None:
         with open(PREFERENCES_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         
-        logger.debug("User preferences saved locally")
+        logger.info("User preferences saved locally")
     except Exception as e:
         logger.error(f"Failed to save preferences: {e}")
 
