@@ -1071,6 +1071,8 @@ def main() -> None:
         webhook_url = os.getenv('WEBHOOK_URL')
         if webhook_url:
             try:
+                # Remove trailing slash from webhook_url to avoid double slashes
+                webhook_url = webhook_url.rstrip('/')
                 await application.bot.set_webhook(url=f"{webhook_url}/webhook")
                 logger.info(f"Webhook set to: {webhook_url}/webhook")
             except Exception as e:
