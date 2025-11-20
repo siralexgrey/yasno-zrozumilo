@@ -1036,7 +1036,7 @@ def main() -> None:
     # Register message handler for custom keyboard buttons
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_keyboard_buttons))
     
-    # Start health check server in background
+    # Start health check server (always, for Koyeb health checks)
     async def start_health_server():
         async def health_check(request):
             return web.Response(text='OK', status=200)
@@ -1158,7 +1158,39 @@ def main() -> None:
             loop.close()
             logger.info("Event loop closed")
     else:
-        logger.info("Running in polling mode (local)")
+        logger.info("Running in polling mode")
+        
+        # For polling mode, start health server in a separate thread
+        import threading
+        health_server_started = threading.Event()
+        
+        def run_health_server():
+            """Run health server in separate thread with its own event loop"""
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            async def start_server():
+                runner = await start_health_server()
+                health_server_started.set()
+                logger.info("Health server started for polling mode")
+                # Keep server running
+                await asyncio.Event().wait()
+            
+            try:
+                loop.run_until_complete(start_server())
+            except KeyboardInterrupt:
+                pass
+            finally:
+                loop.close()
+        
+        # Start health server in background thread
+        health_thread = threading.Thread(target=run_health_server, daemon=True)
+        health_thread.start()
+        
+        # Wait for health server to start
+        health_server_started.wait(timeout=5)
+        
+        # Run polling (uses its own event loop)
         application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
