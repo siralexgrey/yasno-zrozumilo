@@ -391,7 +391,8 @@ async def update_schedule(context) -> None:
             last_update = datetime.now()
             logger.warning("No updatedOn timestamps found, using current time")
         
-        await save_preferences()  # Save last update time
+        # Don't save preferences here - only save when user preferences actually change
+        # This prevents overwriting the Gist on every schedule update
     else:
         logger.warning("Failed to update schedule")
 
