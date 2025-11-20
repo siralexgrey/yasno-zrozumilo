@@ -63,6 +63,16 @@ user_notifications: Dict[int, int] = {}
 previous_schedule_data: Optional[Dict[str, Any]] = None
 
 
+def get_main_keyboard() -> ReplyKeyboardMarkup:
+    """Get the main reply keyboard for the bot."""
+    keyboard = [
+        ["📋 Графік", "🔸 Моя черга"],
+        ["⚙️ Вибрати чергу", "🔔 Сповіщення"],
+        ["📊 Статус", "ℹ️ Довідка"]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+
+
 async def load_preferences() -> None:
     """Load user preferences from JSON file or GitHub Gist."""
     global user_queue_preferences, user_notifications, last_update
@@ -557,15 +567,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "Я працюю як в особистих повідомленнях, так і в групових чатах!"
     )
     
-    # Create custom reply keyboard with command buttons under input field
-    keyboard = [
-        ["📋 Графік", "🔸 Моя черга"],
-        ["⚙️ Вибрати чергу", "🔔 Сповіщення"],
-        ["📊 Статус", "ℹ️ Довідка"]
-    ]
-    
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-    await update.message.reply_text(welcome_message, reply_markup=reply_markup, parse_mode='Markdown')
+    await update.message.reply_text(welcome_message, reply_markup=get_main_keyboard(), parse_mode='Markdown')
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -591,7 +593,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Бот автоматично оновлює дані кожні 10 хвилин.\n"
         "Можна використовувати в груповому чаті."
     )
-    await update.message.reply_text(help_message, parse_mode='Markdown')
+    await update.message.reply_text(help_message, reply_markup=get_main_keyboard(), parse_mode='Markdown')
 
 
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -603,7 +605,8 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     
     if schedule_data is None:
         await update.message.reply_text(
-            "⏳ Завантажую дані... Спробуйте ще раз через кілька секунд."
+            "⏳ Завантажую дані... Спробуйте ще раз через кілька секунд.",
+            reply_markup=get_main_keyboard()
         )
         return
     
@@ -618,7 +621,7 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         time_info = f"\n\n🕐 Оновлено: {last_update.strftime('%d.%m.%Y %H:%M')}"
         formatted_schedule += time_info
     
-    await update.message.reply_text(formatted_schedule, parse_mode='Markdown')
+    await update.message.reply_text(formatted_schedule, reply_markup=get_main_keyboard(), parse_mode='Markdown')
 
 
 async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -629,7 +632,8 @@ async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     
     if schedule_data is None:
         await update.message.reply_text(
-            "⏳ Завантажую дані... Спробуйте ще раз через кілька секунд."
+            "⏳ Завантажую дані... Спробуйте ще раз через кілька секунд.",
+            reply_markup=get_main_keyboard()
         )
         return
     
@@ -681,13 +685,15 @@ async def myqueue_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not queue_filter:
         await update.message.reply_text(
             "❌ Ви ще не вибрали чергу.\n\n"
-            "Використовуйте /queue щоб вибрати свою чергу."
+            "Використовуйте /queue щоб вибрати свою чергу.",
+            reply_markup=get_main_keyboard()
         )
         return
     
     if schedule_data is None:
         await update.message.reply_text(
-            "⏳ Завантажую дані... Спробуйте ще раз через кілька секунд."
+            "⏳ Завантажую дані... Спробуйте ще раз через кілька секунд.",
+            reply_markup=get_main_keyboard()
         )
         return
     
@@ -697,7 +703,7 @@ async def myqueue_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         time_info = f"\n\n🕐 Оновлено: {last_update.strftime('%d.%m.%Y %H:%M')}"
         formatted_schedule += time_info
     
-    await update.message.reply_text(formatted_schedule, parse_mode='Markdown')
+    await update.message.reply_text(formatted_schedule, reply_markup=get_main_keyboard(), parse_mode='Markdown')
 
 
 async def queue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -772,7 +778,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"Дані: {'✅ Доступні' if schedule_data else '❌ Недоступні'}"
         )
     
-    await update.message.reply_text(status_message, parse_mode='Markdown')
+    await update.message.reply_text(status_message, reply_markup=get_main_keyboard(), parse_mode='Markdown')
 
 
 async def command_buttons_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
