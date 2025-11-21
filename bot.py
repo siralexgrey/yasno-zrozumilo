@@ -72,9 +72,6 @@ user_city_preferences: Dict[int, str] = {}
 # Stores chat IDs of users who want automatic notifications
 user_notifications: Dict[int, int] = {}
 
-# Previous schedule state for change detection
-previous_schedule_data: Dict[str, Optional[Dict[str, Any]]] = {'dnipro': None, 'kyiv': None}
-
 
 def get_main_keyboard(has_city: bool = True) -> ReplyKeyboardMarkup:
     """Get the main reply keyboard for the bot."""
@@ -521,7 +518,7 @@ async def update_schedule(context) -> None:
     Background task to update the schedule every 10 minutes for all cities.
     Also sends notifications to users if their queue schedule changed.
     """
-    global schedule_data, last_update, last_fetch, previous_schedule_data
+    global schedule_data, last_update, last_fetch
     
     logger.info("Updating schedule for all cities...")
     
@@ -541,11 +538,11 @@ async def update_schedule(context) -> None:
             last_fetch[city_code] = datetime.now(schedule_tz)
             
             # Check for changes and notify users
-            if schedule_data[city_code] is not None and previous_schedule_data[city_code] != data:
+            if schedule_data[city_code] is not None and schedule_data[city_code] != data:
                 # Only notify users who have this city selected
-                await notify_users_of_changes_for_city(application, previous_schedule_data[city_code], data, city_code)
+                await notify_users_of_changes_for_city(application, schedule_data[city_code], data, city_code)
             
-            previous_schedule_data[city_code] = schedule_data[city_code]  # Store previous state
+            # Update schedule data (old becomes previous, new becomes current)
             schedule_data[city_code] = data
             
             # Extract the most recent updatedOn timestamp from all queues
