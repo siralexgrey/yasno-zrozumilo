@@ -370,6 +370,7 @@ async def fetch_schedule(city: str = 'dnipro') -> Optional[Dict[str, Any]]:
 def has_schedule_changed(old_data: Dict[str, Any], new_data: Dict[str, Any], queue_name: str) -> tuple[bool, list[str]]:
     """
     Check if schedule changed for a specific queue.
+    Excludes natural date rollovers (when tomorrow becomes today).
     
     Returns:
         Tuple of (changed: bool, changes: list of change descriptions)
@@ -383,6 +384,25 @@ def has_schedule_changed(old_data: Dict[str, Any], new_data: Dict[str, Any], que
     new_queue = new_data.get(queue_name, {})
     
     if not old_queue or not new_queue:
+        return False, []
+    
+    # Get slot data
+    old_today_slots = old_queue.get('today', {}).get('slots', [])
+    new_today_slots = new_queue.get('today', {}).get('slots', [])
+    old_tomorrow_slots = old_queue.get('tomorrow', {}).get('slots', [])
+    new_tomorrow_slots = new_queue.get('tomorrow', {}).get('slots', [])
+    
+    # Check for natural date rollover: old tomorrow becomes new today
+    # This happens at midnight and should NOT trigger a notification
+    is_date_rollover = (
+        old_tomorrow_slots and 
+        new_today_slots and 
+        old_tomorrow_slots == new_today_slots and
+        old_today_slots != new_today_slots  # Today actually changed
+    )
+    
+    if is_date_rollover:
+        # This is just a natural date change, not a schedule update
         return False, []
     
     # Check if updatedOn changed
@@ -418,10 +438,7 @@ def has_schedule_changed(old_data: Dict[str, Any], new_data: Dict[str, Any], que
         if 'slots' in new_tomorrow:
             changes.append("З'явився графік на завтра!")
     
-    # Check if today's slots changed
-    old_today_slots = old_queue.get('today', {}).get('slots', [])
-    new_today_slots = new_queue.get('today', {}).get('slots', [])
-    
+    # Check if today's slots changed (excluding date rollovers already handled above)
     if old_today_slots != new_today_slots:
         changes.append("Змінився графік на сьогодні")
     
