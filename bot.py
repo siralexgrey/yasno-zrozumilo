@@ -386,6 +386,10 @@ def has_schedule_changed(old_data: Dict[str, Any], new_data: Dict[str, Any], que
     if not old_queue or not new_queue:
         return False, []
     
+    # First check: if entire queue objects are identical, no change
+    if old_queue == new_queue:
+        return False, []
+    
     # Get slot data
     old_today_slots = old_queue.get('today', {}).get('slots', [])
     new_today_slots = new_queue.get('today', {}).get('slots', [])
