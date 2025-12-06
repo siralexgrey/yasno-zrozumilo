@@ -426,6 +426,17 @@ def has_schedule_changed(old_data: Dict[str, Any], new_data: Dict[str, Any], que
             # Fallback to truncated string if parsing fails
             changes.append(f"Графік оновлено: {new_updated[:16]}")
     
+    # Check for emergency status changes
+    old_today = old_queue.get('today', {})
+    new_today = new_queue.get('today', {})
+    old_today_status = old_today.get('status', '')
+    new_today_status = new_today.get('status', '')
+    
+    if new_today_status == 'EmergencyShutdowns' and old_today_status != 'EmergencyShutdowns':
+        changes.append("🚨 АВАРІЙНЕ ВІДКЛЮЧЕННЯ сьогодні!")
+    elif old_today_status == 'EmergencyShutdowns' and new_today_status != 'EmergencyShutdowns':
+        changes.append("✅ Аварійне відключення скасовано")
+    
     # Check if tomorrow's schedule appeared
     old_tomorrow = old_queue.get('tomorrow', {})
     new_tomorrow = new_queue.get('tomorrow', {})
@@ -433,9 +444,15 @@ def has_schedule_changed(old_data: Dict[str, Any], new_data: Dict[str, Any], que
     old_status = old_tomorrow.get('status', '')
     new_status = new_tomorrow.get('status', '')
     
+    # Check for emergency status on tomorrow
+    if new_status == 'EmergencyShutdowns' and old_status != 'EmergencyShutdowns':
+        changes.append("🚨 АВАРІЙНЕ ВІДКЛЮЧЕННЯ завтра!")
+    elif old_status == 'EmergencyShutdowns' and new_status != 'EmergencyShutdowns':
+        changes.append("✅ Аварійне відключення на завтра скасовано")
+    
     # If tomorrow's schedule changed from WaitingForSchedule to having slots
     if old_status == 'WaitingForSchedule' and new_status != 'WaitingForSchedule':
-        if 'slots' in new_tomorrow:
+        if 'slots' in new_tomorrow and new_status != 'EmergencyShutdowns':
             changes.append("З'явився графік на завтра!")
     
     # Check if today's slots changed (excluding date rollovers already handled above)
@@ -654,19 +671,33 @@ def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None, ci
         if 'today' in queue_data:
             today = queue_data['today']
             today_date = format_date_eastern(today.get('date', ''))
+            today_status = today.get('status', '')
+            
             message += f"📅 Сьогодні ({today_date}):\n"
             
-            if 'slots' in today:
-                has_outages = False
-                for slot in today['slots']:
-                    if slot.get('type') == 'Definite':
-                        has_outages = True
-                        start_time = minutes_to_time(slot['start'])
-                        end_time = minutes_to_time(slot['end'])
-                        message += f"  🔴 {start_time} - {end_time} (відключення)\n"
-                
-                if not has_outages:
-                    message += "  ✅ Відключень немає\n"
+            # Check for emergency status
+            if today_status == 'EmergencyShutdowns':
+                message += "  🚨 *АВАРІЙНЕ ВІДКЛЮЧЕННЯ!*\n"
+                # For emergency status, show slots if available
+                if 'slots' in today:
+                    for slot in today['slots']:
+                        if slot.get('type') == 'Definite':
+                            start_time = minutes_to_time(slot['start'])
+                            end_time = minutes_to_time(slot['end'])
+                            message += f"  🔴 {start_time} - {end_time} (відключення)\n"
+            else:
+                # Normal status - show slots or "no outages"
+                if 'slots' in today:
+                    has_outages = False
+                    for slot in today['slots']:
+                        if slot.get('type') == 'Definite':
+                            has_outages = True
+                            start_time = minutes_to_time(slot['start'])
+                            end_time = minutes_to_time(slot['end'])
+                            message += f"  🔴 {start_time} - {end_time} (відключення)\n"
+                    
+                    if not has_outages:
+                        message += "  ✅ Відключень немає\n"
         
         # Tomorrow's schedule
         if 'tomorrow' in queue_data:
@@ -677,6 +708,14 @@ def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None, ci
             status = tomorrow.get('status', '')
             if status == 'WaitingForSchedule':
                 message += "  ⏳ Очікується графік\n"
+            elif status == 'EmergencyShutdowns':
+                message += "  🚨 *АВАРІЙНЕ ВІДКЛЮЧЕННЯ!*\n"
+                if 'slots' in tomorrow:
+                    for slot in tomorrow['slots']:
+                        if slot.get('type') == 'Definite':
+                            start_time = minutes_to_time(slot['start'])
+                            end_time = minutes_to_time(slot['end'])
+                            message += f"  🔴 {start_time} - {end_time} (відключення)\n"
             elif 'slots' in tomorrow:
                 has_outages = False
                 for slot in tomorrow['slots']:
