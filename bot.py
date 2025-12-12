@@ -727,8 +727,12 @@ def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None, ci
                 if total_outage_minutes > 0:
                     total_minutes_in_day = 24 * 60
                     power_minutes = total_minutes_in_day - total_outage_minutes
-                    power_hours = power_minutes / 60
-                    message += f"  ⚡️ Електрика: {power_hours:.1f} год\n"
+                    hours = power_minutes // 60
+                    minutes = power_minutes % 60
+                    if minutes > 0:
+                        message += f"  ⚡️ Електрика: {hours} год {minutes} хв\n"
+                    else:
+                        message += f"  ⚡️ Електрика: {hours} год\n"
             
             # Tomorrow's schedule
             if 'tomorrow' in queue_data:
@@ -759,8 +763,12 @@ def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None, ci
                 if status != 'WaitingForSchedule' and total_outage_minutes > 0:
                     total_minutes_in_day = 24 * 60
                     power_minutes = total_minutes_in_day - total_outage_minutes
-                    power_hours = power_minutes / 60
-                    message += f"  ⚡️ Електрика: {power_hours:.1f} год\n"
+                    hours = power_minutes // 60
+                    minutes = power_minutes % 60
+                    if minutes > 0:
+                        message += f"  ⚡️ Електрика: {hours} год {minutes} хв\n"
+                    else:
+                        message += f"  ⚡️ Електрика: {hours} год\n"
         
         message += "\n"
     
