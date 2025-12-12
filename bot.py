@@ -412,26 +412,10 @@ def has_schedule_changed(old_data: Dict[str, Any], new_data: Dict[str, Any], que
         # This is just a natural date change, not a schedule update
         return False, []
     
-    # Check if updatedOn changed
+    # Store updatedOn for later (only report if there are real changes)
     old_updated = old_queue.get('updatedOn', '')
     new_updated = new_queue.get('updatedOn', '')
-    
-    if old_updated != new_updated:
-        # Format the date nicely: "2025-11-20T15:09:44+02:00" -> "20.11.2025 15:09"
-        try:
-            from datetime import timezone, timedelta as td
-            schedule_tz = timezone(td(hours=2))
-            updated_dt = datetime.fromisoformat(new_updated)
-            # Convert to +02:00 timezone if needed
-            if updated_dt.tzinfo is None:
-                updated_dt = updated_dt.replace(tzinfo=schedule_tz)
-            else:
-                updated_dt = updated_dt.astimezone(schedule_tz)
-            formatted_date = updated_dt.strftime('%d.%m.%Y %H:%M')
-            changes.append(f"Графік оновлено: {formatted_date}")
-        except Exception:
-            # Fallback to truncated string if parsing fails
-            changes.append(f"Графік оновлено: {new_updated[:16]}")
+    updated_on_changed = old_updated != new_updated
     
     # Check for emergency status changes
     old_today = old_queue.get('today', {})
@@ -465,6 +449,31 @@ def has_schedule_changed(old_data: Dict[str, Any], new_data: Dict[str, Any], que
     # Check if today's slots changed (excluding date rollovers already handled above)
     if old_today_slots != new_today_slots:
         changes.append("Змінився графік на сьогодні")
+    
+    # Check if tomorrow's slots changed
+    if old_tomorrow_slots != new_tomorrow_slots:
+        # Only add if not already reported via other status changes
+        if "З'явився графік на завтра!" not in changes:
+            changes.append("Змінився графік на завтра")
+    
+    # Only add updatedOn change if there are actual meaningful changes
+    if updated_on_changed and len(changes) > 0:
+        # Format the date nicely: "2025-11-20T15:09:44+02:00" -> "20.11.2025 15:09"
+        try:
+            from datetime import timezone, timedelta as td
+            schedule_tz = timezone(td(hours=2))
+            updated_dt = datetime.fromisoformat(new_updated)
+            # Convert to +02:00 timezone if needed
+            if updated_dt.tzinfo is None:
+                updated_dt = updated_dt.replace(tzinfo=schedule_tz)
+            else:
+                updated_dt = updated_dt.astimezone(schedule_tz)
+            formatted_date = updated_dt.strftime('%d.%m.%Y %H:%M')
+            # Add at the beginning of changes list
+            changes.insert(0, f"Графік оновлено: {formatted_date}")
+        except Exception:
+            # Fallback to truncated string if parsing fails
+            changes.insert(0, f"Графік оновлено: {new_updated[:16]}")
     
     return len(changes) > 0, changes
 
