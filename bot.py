@@ -680,29 +680,35 @@ def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None, ci
             
         message += f"🔸 *Черга {queue_name}*\n"
         
-        # Today's schedule
-        if 'today' in queue_data:
-            today = queue_data['today']
-            today_date = format_date_eastern(today.get('date', ''))
-            today_status = today.get('status', '')
+        # Check if emergency status is active
+        today_status = queue_data.get('today', {}).get('status', '')
+        
+        if today_status == 'EmergencyShutdowns':
+            # Emergency mode: show only emergency warning without today/tomorrow breakdown
+            message += "🚨 *АВАРІЙНЕ ВІДКЛЮЧЕННЯ!*\n\n"
             
-            message += f"📅 Сьогодні ({today_date}):\n"
-            
-            # Calculate total outage minutes and power hours
-            total_outage_minutes = 0
-            
-            # Check for emergency status
-            if today_status == 'EmergencyShutdowns':
-                message += "  🚨 *АВАРІЙНЕ ВІДКЛЮЧЕННЯ!*\n"
-                # For emergency status, show slots if available
-                if 'slots' in today:
-                    for slot in today['slots']:
-                        if slot.get('type') == 'Definite':
-                            start_time = minutes_to_time(slot['start'])
-                            end_time = minutes_to_time(slot['end'])
-                            message += f"  🔴 {start_time} - {end_time} (відключення)\n"
-                            total_outage_minutes += slot['end'] - slot['start']
+            # Show slots if available
+            today = queue_data.get('today', {})
+            if 'slots' in today and today['slots']:
+                for slot in today['slots']:
+                    if slot.get('type') == 'Definite':
+                        start_time = minutes_to_time(slot['start'])
+                        end_time = minutes_to_time(slot['end'])
+                        message += f"🔴 {start_time} - {end_time}\n"
             else:
+                message += "⏳ Очікується інформація про графік\n"
+        else:
+            # Normal mode: show today and tomorrow
+            # Today's schedule
+            if 'today' in queue_data:
+                today = queue_data['today']
+                today_date = format_date_eastern(today.get('date', ''))
+                
+                message += f"📅 Сьогодні ({today_date}):\n"
+                
+                # Calculate total outage minutes and power hours
+                total_outage_minutes = 0
+                
                 # Normal status - show slots or "no outages"
                 if 'slots' in today:
                     has_outages = False
@@ -716,54 +722,45 @@ def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None, ci
                     
                     if not has_outages:
                         message += "  ✅ Відключень немає\n"
+                
+                # Calculate and display power availability hours (only if there are outages)
+                if total_outage_minutes > 0:
+                    total_minutes_in_day = 24 * 60
+                    power_minutes = total_minutes_in_day - total_outage_minutes
+                    power_hours = power_minutes / 60
+                    message += f"  ⚡️ Електрика: {power_hours:.1f} год\n"
             
-            # Calculate and display power availability hours (only if there are outages)
-            if total_outage_minutes > 0:
-                total_minutes_in_day = 24 * 60
-                power_minutes = total_minutes_in_day - total_outage_minutes
-                power_hours = power_minutes / 60
-                message += f"  ⚡️ Електрика: {power_hours:.1f} год\n"
-        
-        # Tomorrow's schedule
-        if 'tomorrow' in queue_data:
-            tomorrow = queue_data['tomorrow']
-            tomorrow_date = format_date_eastern(tomorrow.get('date', ''))
-            message += f"📅 Завтра ({tomorrow_date}):\n"
-            
-            # Calculate total outage minutes and power hours
-            total_outage_minutes = 0
-            
-            status = tomorrow.get('status', '')
-            if status == 'WaitingForSchedule':
-                message += "  ⏳ Очікується графік\n"
-            elif status == 'EmergencyShutdowns':
-                message += "  🚨 *АВАРІЙНЕ ВІДКЛЮЧЕННЯ!*\n"
-                if 'slots' in tomorrow:
+            # Tomorrow's schedule
+            if 'tomorrow' in queue_data:
+                tomorrow = queue_data['tomorrow']
+                tomorrow_date = format_date_eastern(tomorrow.get('date', ''))
+                message += f"📅 Завтра ({tomorrow_date}):\n"
+                
+                # Calculate total outage minutes and power hours
+                total_outage_minutes = 0
+                
+                status = tomorrow.get('status', '')
+                if status == 'WaitingForSchedule':
+                    message += "  ⏳ Очікується графік\n"
+                elif 'slots' in tomorrow:
+                    has_outages = False
                     for slot in tomorrow['slots']:
                         if slot.get('type') == 'Definite':
+                            has_outages = True
                             start_time = minutes_to_time(slot['start'])
                             end_time = minutes_to_time(slot['end'])
                             message += f"  🔴 {start_time} - {end_time} (відключення)\n"
                             total_outage_minutes += slot['end'] - slot['start']
-            elif 'slots' in tomorrow:
-                has_outages = False
-                for slot in tomorrow['slots']:
-                    if slot.get('type') == 'Definite':
-                        has_outages = True
-                        start_time = minutes_to_time(slot['start'])
-                        end_time = minutes_to_time(slot['end'])
-                        message += f"  🔴 {start_time} - {end_time} (відключення)\n"
-                        total_outage_minutes += slot['end'] - slot['start']
+                    
+                    if not has_outages:
+                        message += "  ✅ Відключень немає\n"
                 
-                if not has_outages:
-                    message += "  ✅ Відключень немає\n"
-            
-            # Calculate and display power availability hours (only if there are outages and not waiting for schedule)
-            if status != 'WaitingForSchedule' and total_outage_minutes > 0:
-                total_minutes_in_day = 24 * 60
-                power_minutes = total_minutes_in_day - total_outage_minutes
-                power_hours = power_minutes / 60
-                message += f"  ⚡️ Електрика: {power_hours:.1f} год\n"
+                # Calculate and display power availability hours (only if there are outages and not waiting for schedule)
+                if status != 'WaitingForSchedule' and total_outage_minutes > 0:
+                    total_minutes_in_day = 24 * 60
+                    power_minutes = total_minutes_in_day - total_outage_minutes
+                    power_hours = power_minutes / 60
+                    message += f"  ⚡️ Електрика: {power_hours:.1f} год\n"
         
         message += "\n"
     
