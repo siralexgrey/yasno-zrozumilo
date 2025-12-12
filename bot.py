@@ -388,7 +388,10 @@ def has_schedule_changed(old_data: Dict[str, Any], new_data: Dict[str, Any], que
     
     # First check: if entire queue objects are identical, no change
     if old_queue == new_queue:
+        logger.debug(f"Queue {queue_name}: objects are identical, no change")
         return False, []
+    
+    logger.debug(f"Queue {queue_name}: objects differ, analyzing changes...")
     
     # Get slot data
     old_today_slots = old_queue.get('today', {}).get('slots', [])
@@ -489,6 +492,7 @@ async def notify_users_of_changes_for_city(application: Application, old_data: D
         changed, changes = has_schedule_changed(old_data, new_data, queue_name)
         
         if changed:
+            logger.info(f"📢 Queue {queue_name} changed for user {user_id}: {changes}")
             try:
                 # Format the notification message
                 city_name = CITIES[city_code]['name']
@@ -576,9 +580,14 @@ async def update_schedule(context) -> None:
             last_fetch[city_code] = datetime.now(schedule_tz)
             
             # Check for changes and notify users
-            if schedule_data[city_code] is not None and schedule_data[city_code] != data:
-                # Only notify users who have this city selected
-                await notify_users_of_changes_for_city(application, schedule_data[city_code], data, city_code)
+            if schedule_data[city_code] is not None:
+                # Check if entire schedule changed
+                if schedule_data[city_code] != data:
+                    logger.info(f"🔔 Schedule changed for {CITIES[city_code]['name']}, checking user queues...")
+                    # Only notify users who have this city selected
+                    await notify_users_of_changes_for_city(application, schedule_data[city_code], data, city_code)
+                else:
+                    logger.info(f"✅ No schedule changes for {CITIES[city_code]['name']}")
             
             # Update schedule data (old becomes previous, new becomes current)
             schedule_data[city_code] = data
@@ -679,6 +688,9 @@ def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None, ci
             
             message += f"📅 Сьогодні ({today_date}):\n"
             
+            # Calculate total outage minutes and power hours
+            total_outage_minutes = 0
+            
             # Check for emergency status
             if today_status == 'EmergencyShutdowns':
                 message += "  🚨 *АВАРІЙНЕ ВІДКЛЮЧЕННЯ!*\n"
@@ -689,6 +701,7 @@ def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None, ci
                             start_time = minutes_to_time(slot['start'])
                             end_time = minutes_to_time(slot['end'])
                             message += f"  🔴 {start_time} - {end_time} (відключення)\n"
+                            total_outage_minutes += slot['end'] - slot['start']
             else:
                 # Normal status - show slots or "no outages"
                 if 'slots' in today:
@@ -699,15 +712,26 @@ def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None, ci
                             start_time = minutes_to_time(slot['start'])
                             end_time = minutes_to_time(slot['end'])
                             message += f"  🔴 {start_time} - {end_time} (відключення)\n"
+                            total_outage_minutes += slot['end'] - slot['start']
                     
                     if not has_outages:
                         message += "  ✅ Відключень немає\n"
+            
+            # Calculate and display power availability hours (only if there are outages)
+            if total_outage_minutes > 0:
+                total_minutes_in_day = 24 * 60
+                power_minutes = total_minutes_in_day - total_outage_minutes
+                power_hours = power_minutes / 60
+                message += f"  ⚡️ Електрика: {power_hours:.1f} год\n"
         
         # Tomorrow's schedule
         if 'tomorrow' in queue_data:
             tomorrow = queue_data['tomorrow']
             tomorrow_date = format_date_eastern(tomorrow.get('date', ''))
             message += f"📅 Завтра ({tomorrow_date}):\n"
+            
+            # Calculate total outage minutes and power hours
+            total_outage_minutes = 0
             
             status = tomorrow.get('status', '')
             if status == 'WaitingForSchedule':
@@ -720,6 +744,7 @@ def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None, ci
                             start_time = minutes_to_time(slot['start'])
                             end_time = minutes_to_time(slot['end'])
                             message += f"  🔴 {start_time} - {end_time} (відключення)\n"
+                            total_outage_minutes += slot['end'] - slot['start']
             elif 'slots' in tomorrow:
                 has_outages = False
                 for slot in tomorrow['slots']:
@@ -728,9 +753,17 @@ def format_schedule(data: Dict[str, Any], queue_filter: Optional[str] = None, ci
                         start_time = minutes_to_time(slot['start'])
                         end_time = minutes_to_time(slot['end'])
                         message += f"  🔴 {start_time} - {end_time} (відключення)\n"
+                        total_outage_minutes += slot['end'] - slot['start']
                 
                 if not has_outages:
                     message += "  ✅ Відключень немає\n"
+            
+            # Calculate and display power availability hours (only if there are outages and not waiting for schedule)
+            if status != 'WaitingForSchedule' and total_outage_minutes > 0:
+                total_minutes_in_day = 24 * 60
+                power_minutes = total_minutes_in_day - total_outage_minutes
+                power_hours = power_minutes / 60
+                message += f"  ⚡️ Електрика: {power_hours:.1f} год\n"
         
         message += "\n"
     
