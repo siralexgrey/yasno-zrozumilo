@@ -451,10 +451,13 @@ def has_schedule_changed(old_data: Dict[str, Any], new_data: Dict[str, Any], que
         changes.append("Змінився графік на сьогодні")
     
     # Check if tomorrow's slots changed
-    if old_tomorrow_slots != new_tomorrow_slots:
-        # Only add if not already reported via other status changes
-        if "З'явився графік на завтра!" not in changes:
-            changes.append("Змінився графік на завтра")
+    # Only compare if BOTH old and new status are NOT "WaitingForSchedule"
+    # (WaitingForSchedule means placeholder data, not final schedule)
+    if (old_status != 'WaitingForSchedule' and new_status != 'WaitingForSchedule'):
+        if old_tomorrow_slots != new_tomorrow_slots:
+            # Only add if not already reported via other status changes
+            if "З'явився графік на завтра!" not in changes:
+                changes.append("Змінився графік на завтра")
     
     # Only add updatedOn change if there are actual meaningful changes
     if updated_on_changed and len(changes) > 0:
